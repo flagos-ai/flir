@@ -108,7 +108,7 @@ private:
   LogicalResult processPtrBroadcastOperations(ModuleOp moduleOp);
 
 public:
-  TritonToLinalgIncubatedPass(bool globalKernel_ = true, bool namedOps_ = false,
+    TritonToLinalgIncubatedPass(bool globalKernel_ = true, bool namedOps_ = false,
                               bool enableNd2NzOnVector_ = false,
                               bool enableSelectAnalysis_ = false,
                               bool compileOn91095_ = false)

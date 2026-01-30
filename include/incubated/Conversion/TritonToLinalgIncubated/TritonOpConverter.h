@@ -25,6 +25,7 @@
 #define TRITON_ADAPTER_TRITONOPCONVERTER_H
 
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -66,6 +67,21 @@ public:
   LogicalResult
   matchAndRewrite(triton::PreciseDivFOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
+};
+
+/*
+Convert `tt.fp_to_fp` operation with RTNE (default) rounding mode to
+`arith.truncf` or `arith.extf` operation.
+For fp8 conversions with default RTNE rounding:
+- downcast: tt.fp_to_fp -> arith.truncf
+- upcast: tt.fp_to_fp -> arith.extf
+Note: Non-RTNE rounding modes (e.g., RTZ) are handled by TritonToHFusion pass.
+*/
+struct FpToFpCanonicalizer : public OpRewritePattern<triton::FpToFpOp> {
+public:
+  using OpRewritePattern<triton::FpToFpOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(triton::FpToFpOp op,
+                                PatternRewriter &rewriter) const override;
 };
 
 class SelectCanonicalizer : public OpRewritePattern<arith::SelectOp> {

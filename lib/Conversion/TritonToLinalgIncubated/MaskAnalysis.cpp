@@ -43,6 +43,28 @@ namespace mlir {
 
 namespace triton {
 
+namespace {
+
+template <typename MemAccOpTy>
+std::optional<MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
+{
+  auto mask = op.getMask();
+  if (!mask) {
+    return std::nullopt;
+  }
+
+  PatternRewriter::InsertionGuard insertGuard(builder);
+  builder.setInsertionPoint(op);
+
+  MaskState mstate;
+  if (mstate.parse(mask, op.getLoc(), builder).failed()) {
+    return std::nullopt;
+  }
+  return mstate;
+}
+
+} // namespace
+
 namespace Incubated {
 
 LogicalResult MaskState::parse(Value operand, const Location &loc,
@@ -241,8 +263,18 @@ LogicalResult MaskState::parseConstant(arith::ConstantOp constOp,
     auto elementType = attr.getElementType();
     assert(attr.isSplat() && isa<IntegerType>(elementType) &&
            "All elements must share a single integer constant value");
-    this->scalar = builder.getIndexAttr(
-        attr.getSplatValue<IntegerAttr>().getValue().getSExtValue());
+
+    if (elementType.isInteger(1) && isa<ShapedType>(constOp.getValue().getType())) {
+      auto shapedType = cast<ShapedType>(constOp.getValue().getType());
+      auto shape = shapedType.getShape();
+      for (size_t i = 0; i < shape.size(); i++) {
+        this->dims.push_back(builder.getIndexAttr(shape[i]));
+        this->offsets.push_back(builder.getIndexAttr(0));
+      }
+    } else {
+      this->scalar = builder.getIndexAttr(
+          attr.getSplatValue<IntegerAttr>().getValue().getSExtValue());
+    }
   } else {
     auto value = cast<IntegerAttr>(constOp.getValue()).getInt();
     this->scalar = builder.getIndexAttr(value);
@@ -277,6 +309,7 @@ LogicalResult MaskState::parseAdd(arith::AddIOp addOp, const Location &loc,
 LogicalResult MaskState::parseDiv(arith::DivSIOp divOp, const Location &loc,
                                   OpBuilder &builder) {
   assert(this->isEmpty());
+  return failure(); // temporarily disable parseDiv
   MaskState lhsState;
   if (failed(lhsState.parse(divOp.getLhs(), loc, builder))) {
     return failure();
@@ -617,6 +650,20 @@ void MaskState::eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter) {
 }
 
 } // namespace Incubated
+
+std::optional<MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder)
+{
+  if (auto loadOp = dyn_cast<triton::LoadOp>(op)) {
+    return runMaskAnalysisImpl(loadOp, builder);
+  }
+  if (auto storeOp = dyn_cast<triton::StoreOp>(op)) {
+    return runMaskAnalysisImpl(storeOp, builder);
+  }
+  if (auto atomicRMWOp = dyn_cast<triton::AtomicRMWOp>(op)) {
+    return runMaskAnalysisImpl(atomicRMWOp, builder);
+  }
+  return std::nullopt;
+}
 
 } // namespace triton
 

@@ -35,6 +35,12 @@
 #if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif
+#if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#endif
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -300,20 +306,26 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
   auto memRefElementType = memRefType.getElementType();
 
   Value allocOp;
+  Value allocOpTmp;
   if (op->hasAttr(ConverterUtils::discreteAttrName)) {
     Operation *loop = op->getParentOp();
+    int extractedLoopCount = 1;
     for (auto parentOp = loop->getParentOp();
          parentOp->hasAttr("ExtractedLoadOrStore");
-         parentOp = parentOp->getParentOp())
+         parentOp = parentOp->getParentOp()) {
       loop = parentOp;
+      extractedLoopCount++;
+    }
     rewriter.setInsertionPoint(loop);
     auto loopOp = cast<scf::ForOp>(loop);
     auto fullMemRefShape =
         cast<RankedTensorType>(loopOp.getInitArgs()[0].getType()).getShape();
     auto fullMemRefType = MemRefType::get(fullMemRefShape, memRefElementType);
-    if (fullMemRefShape.size() == 2u)
+    bool isIndexSelectScenario = (extractedLoopCount == 1) && (fullMemRefShape.size() > 1u);
+    if (isIndexSelectScenario)
       loopOp->setAttr("hivm.parallel_loop", rewriter.getUnitAttr());
     allocOp = rewriter.create<memref::AllocOp>(loc, fullMemRefType);
+    allocOpTmp = allocOp;
     rewriter.setInsertionPointAfter(loop);
     auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
         loc, RankedTensorType::get(fullMemRefShape, memRefElementType), allocOp,
@@ -371,10 +383,13 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     auto dstSubview = mlir::ConverterUtils::makeSubViewOp(
         allocOp, boundarySizes, loc, rewriter);
     rewriter.create<memref::CopyOp>(loc, srcSubView, dstSubview);
-    if (mayImplicitTransposeWithLastAxis) {
+    if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::AllocOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, dstSubview);
       markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
                       UnitAttr::get(rewriter.getContext()));
+    } else if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::SubViewOp>()) {
+        auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOpTmp);
+        markOp->setAttr(MayImplicitTransposeWithLastAxisTAG, UnitAttr::get(rewriter.getContext()));
     }
     return this->toTensorAndReplace(op, tensorType, allocOp,
                                     mayImplicitTransposeWithLastAxis, loc,
@@ -475,10 +490,13 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     auto castOp = rewriter.create<memref::CastOp>(loc, castType, dstSubView);
     rewriter.create<memref::CopyOp>(loc, srcSubView, castOp);
 
-    if (mayImplicitTransposeWithLastAxis) {
+    if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::AllocOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOp);
       markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
                       UnitAttr::get(rewriter.getContext()));
+    } else if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::SubViewOp>()) {
+      auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOpTmp);
+      markOp->setAttr(MayImplicitTransposeWithLastAxisTAG, UnitAttr::get(rewriter.getContext()));
     }
   }
   return this->toTensorAndReplace(
@@ -677,6 +695,151 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
   return success();
 }
 
+AtomicRMWNewConverter::AtomicRMWNewConverter(MLIRContext *context)
+    : OpConversionPattern<triton::AtomicRMWOp>(context) {}
+
+// lowering tt.atomicRMW to linalg.generic
+// If atomic op's return value is used by other op as it's the old value stored
+// at the ptrwe will use tt.load to get it
+//
+// example:
+// input:
+//  %return_value = tt.atomic_rmw fadd, acq_rel, gpu,
+//     %output_memref, %input_tensor, %mask :
+//             (tensor<256x!tt.ptr<f32>>, tensor<256xf32>, tensor<256xi1>)
+//                       -> tensor<256xf32>
+//
+// output:
+//  memref.copy %output_memref, %ub_buf : memref<?xf32> to memref<?xf32>
+//  %17 = bufferization.to_tensor %alloc_3 restrict writable : memref<256xf32>
+//  linalg.generic
+//    {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]}
+//    ins(%output_memref, %masked_input_memref : memref<?xf32>, memref<?xf32>)
+//    outs(%subview_2 : memref<?xf32>)
+//    attrs = {GenericAtomicRMW = "fadd", MemSemantic = "acq_rel",
+//                                        MemSyncScope = "gpu"} {
+//    ^bb0(%in: f32, %in_9: f32, %out: f32):
+//      %25 = arith.addf %in, %in_9 : f32
+//      linalg.yield %25 : f32
+//    }
+LogicalResult
+AtomicRMWNewConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
+                                    ConversionPatternRewriter &rewriter) const {
+  auto ptr = adaptor.getPtr();
+  auto val = op.getVal();
+  auto loc = op.getLoc();
+  auto mask = op.getMask();
+  auto rmwOp = op.getAtomicRmwOp();
+  auto resType = dyn_cast<TensorType>(op.getResult().getType());
+  auto ptrType = dyn_cast<MemRefType>(ptr.getType());
+
+  if (!resType)
+    return rewriter.notifyMatchFailure(
+        op, "atomicRMWConverter: scalar will be handled by "
+            "ScalarAtomicRMWCanonicalizer");
+  if (!ptrType)
+    return rewriter.notifyMatchFailure(
+        op, "AtomicRMWOp expects a memref, not a memref of pointers");
+
+  const std::map<RMWOp, hivm::AtomicKind> atomicKindMap = {
+      {RMWOp::ADD, hivm::AtomicKind::ADD},
+      {RMWOp::FADD, hivm::AtomicKind::ADD},
+      {RMWOp::OR, hivm::AtomicKind::OR},
+      {RMWOp::XOR, hivm::AtomicKind::XOR},
+      {RMWOp::AND, hivm::AtomicKind::AND},
+      {RMWOp::MIN, hivm::AtomicKind::MIN},
+      {RMWOp::UMIN, hivm::AtomicKind::UMIN},
+      {RMWOp::MAX, hivm::AtomicKind::MAX},
+      {RMWOp::UMAX, hivm::AtomicKind::UMAX},
+      {RMWOp::XCHG, hivm::AtomicKind::XCHG},
+  };
+
+  assert(atomicKindMap.find(rmwOp) != atomicKindMap.end());
+  auto atomicKind =
+      hivm::AtomicKindAttr::get(rewriter.getContext(), atomicKindMap.at(rmwOp));
+
+  auto dstMemref = ptr;
+  Value inputVal = val;
+
+  // Lazily materialize a memref view only when we truly need buffer
+  // semantics (e.g., mask subview or XCHG lowering). Otherwise keep tensor
+  // inputs to avoid redundant to_memref conversions before hivm.store.
+  Value inputMemref;
+  auto getInputMemref = [&]() -> Value {
+    if (isa<MemRefType>(inputVal.getType()))
+      return inputVal;
+    if (inputMemref)
+      return inputMemref;
+    inputMemref =
+        rewriter.create<bufferization::ToMemrefOp>(loc, ptrType, inputVal);
+    return inputMemref;
+  };
+
+  bool isDiscreteMask = false;
+  if (mask) {
+    auto constantMask = mask.getDefiningOp<arith::ConstantOp>();
+    if (constantMask && !isConstantMaskTrue(mask)) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    MaskState mstate;
+    isDiscreteMask = mstate.parse(mask, loc, rewriter).failed();
+    if (!constantMask && !isDiscreteMask) {
+      // For dstMemref (store output), use subview to maintain reference to
+      // original memref. For inputVal (store input), use tensor.extract_slice
+      // to keep tensor semantics.
+      dstMemref = mstate.getSubview(ptr, loc, rewriter);
+
+      auto inputMemrefVal = getInputMemref();
+      auto inputMemrefType = cast<MemRefType>(inputMemrefVal.getType());
+      auto inputTensorType = RankedTensorType::get(
+          inputMemrefType.getShape(), inputMemrefType.getElementType());
+      Value inputTensor = rewriter.create<bufferization::ToTensorOp>(
+          loc, inputTensorType, inputMemrefVal, true, true);
+      inputVal = mstate.getExtractSlice(inputTensor, loc, rewriter);
+    }
+  }
+
+  if (!op.getResult().use_empty()) {
+    auto tensorType =
+        RankedTensorType::get(ptrType.getShape(), ptrType.getElementType());
+    auto alloc = rewriter.create<memref::AllocOp>(
+        loc, MemRefType::get(ptrType.getShape(), ptrType.getElementType()));
+    rewriter.create<memref::CopyOp>(loc, ptr, alloc);
+    Value tensorToReplace = rewriter.create<bufferization::ToTensorOp>(
+        loc, tensorType, alloc, true /* restrict */, true /* writable */);
+    rewriter.replaceOp(op, tensorToReplace);
+  }
+
+  if (isDiscreteMask) {
+    if (rmwOp != RMWOp::XCHG) {
+      return op.emitError("Discrete mask is only expected for XCHG; other atomics "
+                   "should be lowered without discrete masks");
+    }
+    Value memrefMask = mask;
+    if (auto maskTypeT = dyn_cast<TensorType>(mask.getType())) {
+    MemRefType maskTypeM = MemRefType::get(maskTypeT.getShape(), maskTypeT.getElementType());
+    memrefMask =
+        rewriter.create<bufferization::ToMemrefOp>(loc, maskTypeM, mask);
+    }
+    rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(), TypeRange(),
+                                           getInputMemref(), dstMemref,
+                                           memrefMask);
+  } else {
+    if (rmwOp == RMWOp::XCHG)
+      rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(),
+        TypeRange(), getInputMemref(), dstMemref);
+    else
+      rewriter.create<hivm::StoreOp>(op.getLoc(), TypeRange{},
+                                     inputVal, dstMemref, atomicKind);
+  }
+
+  if (op.getResult().use_empty()) {
+    rewriter.eraseOp(op);
+  }
+  return success();
+}
+
 LogicalResult
 AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op, OpAdaptor adaptor,
                                     ConversionPatternRewriter &rewriter) const {
@@ -735,6 +898,20 @@ AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op, OpAdaptor adaptor,
   // so here we have 4 map to create
   for (int i = 0; i < 4; i++) { // 4: 3 input and 1 output
     indexingMaps.push_back(AffineMap::get(rank, 0, inputDims, context));
+  }
+
+  if (!op.getResult().use_empty()) {
+    auto tensorType =
+        RankedTensorType::get(type.getShape(), type.getElementType());
+    auto alloc = rewriter.create<memref::AllocOp>(
+        loc, MemRefType::get(type.getShape(), type.getElementType()));
+
+    // For the return value, don't need to care about mask for now
+    // this op don't support other, so we best not fill it
+    rewriter.create<memref::CopyOp>(loc, ptr, alloc);
+    Value tensor = rewriter.create<bufferization::ToTensorOp>(
+        loc, tensorType, alloc, true /* restrict */, true /* writable */);
+    rewriter.replaceOp(op, tensor);
   }
 
   auto linalgOp = rewriter.create<linalg::GenericOp>(
@@ -796,19 +973,7 @@ AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op, OpAdaptor adaptor,
   // this assessment.
   //
   // logic of handling is copied
-  if (!op.getResult().use_empty()) {
-    auto tensorType =
-        RankedTensorType::get(type.getShape(), type.getElementType());
-    auto alloc = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get(type.getShape(), type.getElementType()));
-
-    // For the return value, don't need to care about mask for now
-    // this op don't support other, so we best not fill it
-    rewriter.create<memref::CopyOp>(loc, ptr, alloc);
-    Value tensor = rewriter.create<bufferization::ToTensorOp>(
-        loc, tensorType, alloc, true /* restrict */, true /* writable */);
-    rewriter.replaceOp(op, tensor);
-  } else {
+  if (op.getResult().use_empty()) {
     rewriter.eraseOp(op);
   }
   return success();
@@ -1044,6 +1209,27 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   auto loc = op.getLoc();
   auto ptr = adaptor.getPtr();
   auto val = adaptor.getValue();
+
+  if (op->hasAttr(ConverterUtils::discreteAttrName)) {
+    Operation *loop = op->getParentOp();
+    int extractedLoopCount = 1;
+    for (auto parentOp = loop->getParentOp();
+         parentOp->hasAttr("ExtractedLoadOrStore");
+         parentOp = parentOp->getParentOp()) {
+      loop = parentOp;
+      extractedLoopCount++;
+    }
+
+    auto valType = dyn_cast<RankedTensorType>(val.getType());
+    if (valType) {
+      auto valShape = valType.getShape();
+      bool isIndexPutScenario = (extractedLoopCount == 1) && (valShape.size() > 1u);
+      if (isIndexPutScenario) {
+        auto loopOp = cast<scf::ForOp>(loop);
+        loopOp->setAttr("hivm.parallel_loop", rewriter.getUnitAttr());
+      }
+    }
+  }
 
   // 1. boundary size check
   auto boundaryCheck = op.getBoundaryCheck();
