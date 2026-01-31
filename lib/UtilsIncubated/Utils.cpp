@@ -56,6 +56,7 @@
 #include <map>
 #include <optional>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 #define DEBUG_TYPE "TritonNPU-Utils"
@@ -667,16 +668,20 @@ OpFoldResult addOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
     return rhs;
 
   auto lhsValue = dyn_cast<Value>(lhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   auto rhsValue = dyn_cast<Value>(rhs);
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::AddIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -693,15 +698,19 @@ OpFoldResult subOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
     return lhs;
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::SubIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -728,15 +737,19 @@ OpFoldResult mulOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
   }
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::MulIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -765,15 +778,19 @@ OpFoldResult divOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
   }
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::DivSIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -797,15 +814,19 @@ OpFoldResult remOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
   }
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::RemSIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -818,15 +839,19 @@ OpFoldResult minOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
     return b.getIndexAttr(std::min(lhsInt.value(), rhsInt.value()));
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::MinSIOp>(loc, lhsValue, rhsValue).getResult();
 }
@@ -839,165 +864,146 @@ OpFoldResult maxOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
     return b.getIndexAttr(std::max(lhsInt.value(), rhsInt.value()));
 
   auto lhsValue = dyn_cast<Value>(lhs), rhsValue = dyn_cast<Value>(rhs);
-  if (lhsInt)
+  if (lhsInt) {
     lhsValue = createConstIndexValueOp(loc, b, lhsInt.value());
-  else
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
     assert(isa<IndexType>(lhsValue.getType()));
+  }
 
-  if (rhsInt)
+  if (rhsInt) {
     rhsValue = createConstIndexValueOp(loc, b, rhsInt.value());
-  else
-    assert(isa<IndexType>(rhsValue.getType()));
+  } else {
+    lhsValue = convertToIndexIfNeeded(lhsValue, loc, b);
+    assert(isa<IndexType>(lhsValue.getType()));
+  }
 
   return b.create<arith::MaxSIOp>(loc, lhsValue, rhsValue).getResult();
 }
 
-LogicalResult
-addReduceWithIndexAttrIfNeeded(ConversionPatternRewriter &rewriter,
-                               linalg::ReduceOp reduceOp) {
-  // To verify whether the operation of the reduceOp is ReduceWithIndex
-  // TODO: maybe a better way of judging?
-  Block &body = reduceOp.getCombiner().front();
-  auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
-
-  auto yieldValue = yieldOp.getValues();
-  if (yieldValue.size() == 0) {
-    return failure();
-  }
-
+void addReduceWithIndexAttr(ReduceWithIndexParams params, ConversionPatternRewriter &rewriter, linalg::ReduceOp reduceOp) {
   const StringRef reduceRef = "reduce_mode";
   const StringRef tieBreakLeftRef = "tie_break_left";
-  // INT
+  const StringRef unsignedSrcRef = "unsigned_src";
+
+  const StringRef tieBreakStr = params.tieBreakType == TieBreakType::LEFT ? "true" : "false";
+  const StringRef withIndexStr = params.withIndexType == ReduceWithIndexType::MAX ? "max_with_index" : "min_with_index";
+  const StringRef unsignedSrcStr = params.isUnsignedSrc ? "true" : "false";
+
+  reduceOp->setAttr(reduceRef, rewriter.getStringAttr(withIndexStr));
+  reduceOp->setAttr(tieBreakLeftRef, rewriter.getStringAttr(tieBreakStr));
+  reduceOp->setAttr(unsignedSrcRef, rewriter.getStringAttr(unsignedSrcStr));
+}
+
+std::optional<ReduceWithIndexParams> getReduceWithIndexParams(triton::ReduceOp reduceOp) {
+  auto tritonReduceBlock = reduceOp.getBody();
+  auto *tritonYield = tritonReduceBlock->getTerminator();
+  auto yieldVelues = tritonYield->getOperands();
+  constexpr int yieldValuesNum = 2;
+  if (yieldVelues.size() != yieldValuesNum) {
+    return {};
+  }
+
+  // Unify signed/unsigned and int/float predicate
+  enum class Predicate { Undefined = 0, lt = 1, gt = 2, eq = 3 };
+  enum class Signedness { NotApplicable = 0, Signed = 1, Unsigned = 2 };
+  auto unifyPredicateI = [](arith::CmpIPredicate p) -> std::pair<Predicate, Signedness> {
+    switch (p) {
+      case arith::CmpIPredicate::slt:
+        return {Predicate::lt, Signedness::Signed};
+      case arith::CmpIPredicate::ult:
+        return {Predicate::lt, Signedness::Unsigned};
+      case arith::CmpIPredicate::sgt:
+        return {Predicate::gt, Signedness::Signed};
+      case arith::CmpIPredicate::ugt:
+        return {Predicate::gt, Signedness::Unsigned};
+      case arith::CmpIPredicate::eq:
+        return {Predicate::eq, Signedness::NotApplicable};
+      default:
+        return {Predicate::Undefined, Signedness::NotApplicable};
+    }
+  };
+  auto unifyPredicateF = [](arith::CmpFPredicate p) -> std::pair<Predicate, Signedness> {
+    switch (p) {
+      case arith::CmpFPredicate::OLT:
+        return {Predicate::lt, Signedness::Signed};
+      case arith::CmpFPredicate::ULT:
+        return {Predicate::lt, Signedness::Unsigned};
+      case arith::CmpFPredicate::OGT:
+        return {Predicate::gt, Signedness::Signed};
+      case arith::CmpFPredicate::UGT:
+        return {Predicate::gt, Signedness::Unsigned};
+      case arith::CmpFPredicate::OEQ:
+        return {Predicate::eq, Signedness::Signed};
+      case arith::CmpFPredicate::UEQ:
+        return {Predicate::eq, Signedness::Unsigned};
+      default:
+        return {Predicate::Undefined, Signedness::NotApplicable};
+    }
+  };
+
   // Composite predicate to pick index of min (or max) element have to be
-  // written in following form: value1 < value2 or (value1 == value2 and index1
-  // < index2) - for leftmost element (value1 == value2 and index1 < index2) or
-  // value1 < value2 - for leftmost element value1 < value2 or (value1 == value2
-  // and index1 > index2) - for rightmost element (value1 == value2 and index1 >
-  // index2) or value1 < value2 - for rightmost element table below encodes all
-  // possible cases of sequences of predicates for min/max and
-  // leftmost/rightmost elements
-  std::map<std::vector<arith::CmpIPredicate>,
-           std::pair<std::string, std::string>>
-      m{
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::sgt,
-            arith::CmpIPredicate::sgt},
-           {"max_with_index", "false"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::sgt,
-            arith::CmpIPredicate::slt},
-           {"min_with_index", "false"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::slt,
-            arith::CmpIPredicate::sgt},
-           {"max_with_index", "true"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::slt,
-            arith::CmpIPredicate::slt},
-           {"min_with_index", "true"}},
-          {{arith::CmpIPredicate::sgt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::sgt},
-           {"max_with_index", "false"}},
-          {{arith::CmpIPredicate::slt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::sgt},
-           {"min_with_index", "false"}},
-          {{arith::CmpIPredicate::sgt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::slt},
-           {"max_with_index", "true"}},
-          {{arith::CmpIPredicate::slt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::slt},
-           {"min_with_index", "true"}},
+  // written in following form: (v means value and i means index)
+  // For leftmost element:
+  //    (new_v == old_v and new_i < old_i) or new_v < old_v
+  //    new_v < old_v or (new_v == old_v and new_i < old_i)
+  //    new_v < old_v // python3.11 ttir
+  //    (new_v == old_v and new_i < old_i) or new_v > old_v
+  //    new_v > old_v or (new_v == old_v and new_i < old_i)
+  //    new_v > old_v // python3.11 ttir
+  // For rightmost element:
+  //    (new_v == old_v and new_i > old_i) or new_v < old_v
+  //    new_v < old_v or (new_v == old_v and new_i > old_i)
+  //    (new_v == old_v and new_i > old_i) or new_v > old_v
+  //    new_v > old_v or (new_v == old_v and new_i > old_i)
 
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::ugt,
-            arith::CmpIPredicate::ugt},
-           {"max_with_index", "false"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::ugt,
-            arith::CmpIPredicate::ult},
-           {"min_with_index", "false"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::ult,
-            arith::CmpIPredicate::ugt},
-           {"max_with_index", "true"}},
-          {{arith::CmpIPredicate::eq, arith::CmpIPredicate::ult,
-            arith::CmpIPredicate::ult},
-           {"min_with_index", "true"}},
-          {{arith::CmpIPredicate::ugt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::ugt},
-           {"max_with_index", "false"}},
-          {{arith::CmpIPredicate::ult, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::ugt},
-           {"min_with_index", "false"}},
-          {{arith::CmpIPredicate::ugt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::ult},
-           {"max_with_index", "true"}},
-          {{arith::CmpIPredicate::ult, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::ult},
-           {"min_with_index", "true"}},
+  std::map<std::vector<Predicate>, std::pair<ReduceWithIndexType, TieBreakType>> m {
+    // leftmost
+    {{Predicate::eq, Predicate::lt, Predicate::lt}, {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+    {{Predicate::lt, Predicate::eq, Predicate::lt}, {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+    {{Predicate::lt}, {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+    {{Predicate::eq, Predicate::lt, Predicate::gt}, {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+    {{Predicate::gt, Predicate::eq, Predicate::lt}, {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+    {{Predicate::gt}, {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+    // rightmost
+    {{Predicate::eq, Predicate::gt, Predicate::lt}, {ReduceWithIndexType::MIN, TieBreakType::RIGHT}},
+    {{Predicate::lt, Predicate::eq, Predicate::gt}, {ReduceWithIndexType::MIN, TieBreakType::RIGHT}},
+    {{Predicate::eq, Predicate::gt, Predicate::gt}, {ReduceWithIndexType::MAX, TieBreakType::RIGHT}},
+    {{Predicate::gt, Predicate::eq, Predicate::gt}, {ReduceWithIndexType::MAX, TieBreakType::RIGHT}},
+  };
 
-          {{arith::CmpIPredicate::ugt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::sgt},
-           {"max_with_index", "false"}},
-          {{arith::CmpIPredicate::ugt, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::slt},
-           {"max_with_index", "true"}},
-          {{arith::CmpIPredicate::ult, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::sgt},
-           {"min_with_index", "false"}},
-          {{arith::CmpIPredicate::ult, arith::CmpIPredicate::eq,
-            arith::CmpIPredicate::slt},
-           {"min_with_index", "true"}},
-      };
-
-  std::vector<arith::CmpIPredicate> preds;
-  using arith::CmpIPredicate;
-  std::unordered_set<arith::CmpIPredicate> allowed{
-      arith::CmpIPredicate::slt, arith::CmpIPredicate::sgt,
-      arith::CmpIPredicate::eq, arith::CmpIPredicate::ult,
-      arith::CmpIPredicate::ugt};
-  // collect predicates under consideration
-  for (auto it = body.begin(); it != body.end(); ++it) {
-    if (auto op = dyn_cast<arith::CmpIOp>(*it)) {
-      auto pred = op.getPredicate();
-      if (allowed.find(pred) == allowed.end()) {
-        continue;
-      }
+  std::vector<Predicate> preds;
+  std::vector<Signedness> signednesses;
+  // A better way is to trace the arith.select
+  // Checking the operations one by one is hacky :(
+  for (auto &op : tritonReduceBlock->without_terminator()) {
+    Predicate pred = Predicate::Undefined;
+    Signedness signedness = Signedness::NotApplicable;
+    if (auto cmpiOp = dyn_cast<arith::CmpIOp>(op)) {
+      auto predi = cmpiOp.getPredicate();
+      std::tie(pred, signedness) = unifyPredicateI(predi);
+    }
+    if (auto cmpfOp = dyn_cast<arith::CmpFOp>(op)) {
+      auto predf = cmpfOp.getPredicate();
+      std::tie(pred, signedness) = unifyPredicateF(predf);
+    }
+    if (pred != Predicate::Undefined) {
       preds.push_back(pred);
+      signednesses.push_back(signedness);
     }
   }
   // check if sequence of predicates matches any sequence for min/max
   // leftmost/rightmost
-  if (m.find(preds) != m.end()) {
-    auto [type, tie_break] = m[preds];
-    reduceOp->setAttr(reduceRef, rewriter.getStringAttr(type));
-    reduceOp->setAttr(tieBreakLeftRef, rewriter.getStringAttr(tie_break));
+  if (m.find(preds) == m.end()) {
+    return {};
   }
 
-  // FLOAT
-  // For float case it's enough to check for OGT/OLT (comparison of elements)
-  // and for sgt/slt (comparison for indices)
-  std::string floatType;
-  std::string tieBreakLeftFloat;
-  for (auto it = body.begin(); it != body.end(); ++it) {
-    if (auto op = dyn_cast<arith::CmpFOp>(*it)) {
-      if (op.getPredicate() != arith::CmpFPredicate::OGT &&
-          op.getPredicate() != arith::CmpFPredicate::OLT) {
-        continue;
-      }
-      floatType = op.getPredicate() == arith::CmpFPredicate::OGT
-                      ? "max_with_index"
-                      : "min_with_index";
-    }
-    if (auto op = dyn_cast<arith::CmpIOp>(*it)) {
-      if (op.getPredicate() != arith::CmpIPredicate::sgt &&
-          op.getPredicate() != arith::CmpIPredicate::slt) {
-        continue;
-      }
-      tieBreakLeftFloat =
-          op.getPredicate() == arith::CmpIPredicate::sgt ? "false" : "true";
-    }
-  }
-  if (!floatType.empty() && !tieBreakLeftFloat.empty()) {
-    reduceOp->setAttr(reduceRef, rewriter.getStringAttr(floatType));
-    reduceOp->setAttr(tieBreakLeftRef,
-                      rewriter.getStringAttr(tieBreakLeftFloat));
-  }
-
-  return success();
+  assert(!signednesses.empty());
+  const bool isUnsignedSrc =
+    signednesses[0] == Signedness::Unsigned ||
+    signednesses[signednesses.size() - 1] == Signedness::Unsigned;
+  return ReduceWithIndexParams {
+    .withIndexType = m.at(preds).first, .tieBreakType = m.at(preds).second, .isUnsignedSrc = isUnsignedSrc};
 }
 
 // Fold layout constant info to attr, otherwise convert to index type value
@@ -1065,7 +1071,8 @@ FailureOr<TypedAttr> specializeTypelessValueToAttr(TypelessValue value,
   auto toPtr = [](mlir::Type ty) { return ty.getAsOpaquePointer(); };
 
   std::map<std::pair<TypelessValue, const void *>,
-           std::variant<int8_t, int16_t, int32_t, int64_t, llvm::APFloat>>
+           std::variant<int8_t, int16_t, int32_t, int64_t, uint32_t, uint64_t,
+           llvm::APFloat>>
       initMap = {
           {{TypelessValue::Zero, toPtr(f16Ty)}, halfZero},
           {{TypelessValue::Zero, toPtr(f32Ty)}, floatZero},
@@ -1179,4 +1186,52 @@ FailureOr<Value> specializeTypelessValueToConstant(TypelessValue value,
   }
   return failure();
 }
+
+std::optional<int64_t> getIntAttr(const OpFoldResult ofr) {
+    Attribute attr;
+    if (auto val = dyn_cast<Value>(ofr)) {
+        if (!val.getDefiningOp<arith::ConstantOp>())
+            return std::nullopt;
+        attr = cast<IntegerAttr>(
+            val.getDefiningOp<arith::ConstantOp>().getValue());
+    } else {
+        attr = dyn_cast<Attribute>(ofr);
+    }
+    if (attr && isa<IntegerAttr>(attr))
+        return dyn_cast<IntegerAttr>(attr).getInt();
+    return std::nullopt;
+}
+
+Value materializeValue(OpBuilder &builder, Location loc, OpFoldResult ofr) {
+  if (auto val = ofr.dyn_cast<Value>()) {
+    return val;
+  }
+
+  auto intVal = getIntAttr(ofr);
+  if (intVal.has_value()) {
+    return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(intVal.value()));
+  }
+  assert(intVal.has_value());
+  return Value();
+
+  // return builder.create<arith::ConstantIndexOp>(
+  //     loc, dyn_cast<IntegerAttr>(attr).getInt());
+}
+
+bool isZero(const OpFoldResult ofr) {
+    auto staticOfr = getIntAttr(ofr);
+    return staticOfr.has_value() && staticOfr.value() == 0;
+}
+
+Value convertToIndexIfNeeded(Value input, const Location &loc, OpBuilder &b) {
+    auto inputType = input.getType();
+    if (auto intType = dyn_cast<IntegerType>(inputType)) {
+      if (intType.isInteger(32) || intType.isInteger(64)) {
+        return b.create<arith::IndexCastOp>(
+          loc, b.getIndexType(), input);
+      }
+    }
+    return input;
+}
+
 } // namespace mlir
