@@ -46,7 +46,7 @@ namespace triton {
 namespace {
 
 template <typename MemAccOpTy>
-std::optional<MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
+std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
 {
   auto mask = op.getMask();
   if (!mask) {
@@ -56,7 +56,7 @@ std::optional<MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
   PatternRewriter::InsertionGuard insertGuard(builder);
   builder.setInsertionPoint(op);
 
-  MaskState mstate;
+  Incubated::MaskState mstate;
   if (mstate.parse(mask, op.getLoc(), builder).failed()) {
     return std::nullopt;
   }
@@ -651,7 +651,7 @@ void MaskState::eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter) {
 
 } // namespace Incubated
 
-std::optional<MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder)
+std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder)
 {
   if (auto loadOp = dyn_cast<triton::LoadOp>(op)) {
     return runMaskAnalysisImpl(loadOp, builder);

@@ -142,7 +142,7 @@ private:
 
 } // namespace Incubated
 
-std::optional<MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder);
+std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder);
 
 } // namespace triton
 

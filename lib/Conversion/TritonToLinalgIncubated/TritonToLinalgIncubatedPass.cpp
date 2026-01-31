@@ -852,7 +852,7 @@ void TritonToLinalgIncubatedPass::annotateTensorKindForModule(
   moduleOp.walk([&](triton::FuncOp func) {
     // INPUT tensors
     this->walkAndMarkTensorKind<
-        TensorKind::INPUT, , triton::LoadOp, triton::IndexSelectSimdOp,
+        TensorKind::INPUT, triton::LoadOp, triton::IndexSelectSimdOp,
         triton::EmbeddingGatherOp, triton::GatherOutToUbOp, triton::IndirectLoadOp>(func);
     // OUTPUT tensors
     this->walkAndMarkTensorKind<TensorKind::OUTPUT, triton::StoreOp, triton::IndexPutOp,
