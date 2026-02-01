@@ -48,6 +48,9 @@
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/ValueRange.h"
+#if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#endif
 
 namespace TTOpConverters {
 using namespace mlir;
@@ -197,31 +200,37 @@ SelectCanonicalizer::matchAndRewrite(arith::SelectOp op,
   rewriter.setInsertionPointAfter(insertSliceOp);
   Value zeroIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   auto offsets = mstate.offsets;
-  SmallVector<Value> isNegVals;
-  for (auto &o : offsets) {
+  SmallVector<Value> isInvalidVals;
+  for (size_t i = 0; i < offsets.size(); i++) {
+    auto &o = offsets[i];
     if (o.is<Value>()) {
       auto oVal = o.get<Value>();
+      int64_t dimSize = type.getShape()[i];
+      Value sizeIndex = rewriter.create<arith::ConstantIndexOp>(loc, dimSize);
       Value isNegative = rewriter.create<arith::CmpIOp>(
           loc, arith::CmpIPredicate::slt, oVal, zeroIndex);
-      isNegVals.push_back(isNegative);
+      Value isOutOfRange = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::sge, oVal, sizeIndex);
+      isInvalidVals.push_back(isNegative);
+      isInvalidVals.push_back(isOutOfRange);
     }
   }
 
-  if (isNegVals.empty()) {
+  if (isInvalidVals.empty()) {
     rewriter.replaceOp(op, insertSliceOp);
     return success();
   }
   // At least one value
-  Value negVal = isNegVals[0];
-  if (isNegVals.size() > 1) {
-    for (int i = 1; i < isNegVals.size(); ++i) {
-      auto tmpOrOp = rewriter.create<arith::OrIOp>(loc, isNegVals[i], negVal);
-      negVal = tmpOrOp.getResult();
+  Value invalidVal = isInvalidVals[0];
+  if (isInvalidVals.size() > 1) {
+    for (int i = 1; i < isInvalidVals.size(); ++i) {
+      auto tmpOrOp = rewriter.create<arith::OrIOp>(loc, isInvalidVals[i], invalidVal);
+      invalidVal = tmpOrOp.getResult();
     }
   }
   // else: what if the number of negative value checks is > 1?
   auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{falseTensor.getType()},
-                                         negVal, true /* addThenBlock */,
+                                         invalidVal, true /* addThenBlock */,
                                          true /* addElseBlock */);
   // thenBuilder
   rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -317,6 +326,54 @@ BitcastCanonicalizer::matchAndRewrite(triton::BitcastOp bitcastOp,
     return success();
   }
   return failure();
+}
+
+LogicalResult FpToFpCanonicalizer::matchAndRewrite(
+    triton::FpToFpOp op, PatternRewriter &rewriter) const {
+  auto loc = op.getLoc();
+  Value input = op.getSrc();
+  auto resultType = op.getResult().getType();
+
+  // Check if rounding mode is specified
+  auto roundingMode = op.getRounding();
+  if (roundingMode.has_value() && roundingMode.value() != triton::RoundingMode::RTNE) {
+    // Non-RTNE rounding modes (e.g., RTZ) should be handled by TritonToHFusion pass
+    // Return failure here so this pattern doesn't match
+    return failure();
+  }
+
+  // Handle RTNE (default) rounding mode with arith.truncf/extf
+  auto srcType = cast<RankedTensorType>(input.getType());
+  auto dstType = cast<RankedTensorType>(resultType);
+  auto srcElemType = srcType.getElementType();
+  auto dstElemType = dstType.getElementType();
+  if (!isa<FloatType>(srcElemType) || !isa<FloatType>(dstElemType)) {
+    return op.emitError("FpToFp expects floating point types");
+  }
+
+  unsigned srcBitwidth = srcElemType.getIntOrFloatBitWidth();
+  unsigned dstBitwidth = dstElemType.getIntOrFloatBitWidth();
+
+  // Create round_mode attribute (RINT for RTNE)
+  auto roundModeAttr = hfusion::RoundModeAttr::get(
+      rewriter.getContext(), hfusion::RoundMode::RINT);
+
+  if (srcBitwidth > dstBitwidth) {
+    // Downcast: use arith.truncf with round_mode=rint
+    auto truncOp = rewriter.create<arith::TruncFOp>(loc, dstType, input);
+    truncOp->setAttr("round_mode", roundModeAttr);
+    rewriter.replaceOp(op, truncOp.getResult());
+  } else if (srcBitwidth < dstBitwidth) {
+    // Upcast: use arith.extf with round_mode=rint
+    auto extOp = rewriter.create<arith::ExtFOp>(loc, dstType, input);
+    extOp->setAttr("round_mode", roundModeAttr);
+    rewriter.replaceOp(op, extOp.getResult());
+  } else {
+    // Same bitwidth, should not happen but handle gracefully
+    rewriter.replaceOp(op, input);
+  }
+
+  return success();
 }
 
 void rewriteUserWithNewOrder(
@@ -511,61 +568,44 @@ MakeTensorPtrCanonicalizer::matchAndRewrite(triton::MakeTensorPtrOp op,
 LogicalResult
 ReduceSingleCanonicalizer::matchAndRewrite(triton::ReduceOp reduceOp,
                                            PatternRewriter &rewriter) const {
-  auto srcs = reduceOp.getSrcs();
-  bool allSrcSingleElem = true;
-  for (auto src : srcs) {
+    assert(reduceOp.getSrcs().size() <=2 && "Only reduce or reduce with index are supported");
+    auto src = reduceOp.getSrcs()[0];
     auto srcType = cast<RankedTensorType>(src.getType());
     auto srcShape = srcType.getShape();
-    int64_t numel = 1;
-    for (auto s : srcShape) {
-      numel *= s;
-    }
-    if (numel != 1) {
-      allSrcSingleElem = false;
-      break;
-    }
-  }
+    if (llvm::any_of(srcShape, [](auto s) { return s != 1; }))
+      return rewriter.notifyMatchFailure(reduceOp, "reduce's srcs are not all with single element");
+    auto loc = reduceOp->getLoc();
 
-  if (!allSrcSingleElem) {
-    return rewriter.notifyMatchFailure(
-        reduceOp, "reduce's srcs are not all with single element");
-  }
-
-  auto results = reduceOp.getResult();
-  auto loc = reduceOp->getLoc();
-  auto zero = rewriter
-                  .create<arith::ConstantOp>(
-                      loc, rewriter.getIndexType(),
-                      rewriter.getIntegerAttr(rewriter.getIndexType(), 0))
-                  .getResult();
-  for (int i = 0; i < srcs.size(); i++) {
-    auto src = srcs[i];
-    auto srcType = cast<RankedTensorType>(src.getType());
-    auto srcRank = srcType.getRank();
-    auto res = results[i];
+    // Handle Reduce Value
+    auto res = reduceOp.getResult()[0];
     Value extracted;
-    if (srcRank == 1) {
-      // vector reduce generates a scalar result
-      extracted =
-          rewriter.create<tensor::ExtractOp>(loc, src, zero).getResult();
+    if (srcType.getRank() == 1) {
+        auto zero = rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+        extracted = rewriter.create<tensor::ExtractOp>(loc, src, zero.getResult()).getResult();
     } else {
-      auto srcShape = srcType.getShape();
-      auto resType = cast<RankedTensorType>(res.getType());
-      auto resShape = resType.getShape();
-      auto collapseReassociationIndicesOptional =
-          getReassociationIndicesForCollapse(srcShape, resShape);
-      if (!collapseReassociationIndicesOptional.has_value()) {
-        return rewriter.notifyMatchFailure(
-            reduceOp, "Failure with getReassociationIndicesForCollapse call");
-      }
-      auto collapseReassociationIndices =
-          collapseReassociationIndicesOptional.value();
-      extracted = rewriter
-                      .create<tensor::CollapseShapeOp>(
-                          loc, src, collapseReassociationIndices)
-                      .getResult();
+        auto resShape = cast<RankedTensorType>(res.getType()).getShape();
+        auto collapseReassociationIndicesOptional = getReassociationIndicesForCollapse(srcShape, resShape);
+        if (!collapseReassociationIndicesOptional.has_value()) {
+            return rewriter.notifyMatchFailure(reduceOp, "Failure with getReassociationIndicesForCollapse call");
     }
-    res.replaceAllUsesWith(extracted);
+    auto collapseReassociationIndices = collapseReassociationIndicesOptional.value();
+    extracted = rewriter.create<tensor::CollapseShapeOp>(loc, src, collapseReassociationIndices).getResult();
+  }
+  res.replaceAllUsesWith(extracted);
+
+  // Handle Reduce Index
+  if(reduceOp.getSrcs().size() == 1)
+    return success();
+
+  auto resIdx = reduceOp.getResult()[1];
+    auto zeroI32 = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+    if (srcType.getRank() == 1) {
+        resIdx.replaceAllUsesWith(zeroI32);
+    } else {
+      auto resIdxShape = cast<RankedTensorType>(resIdx.getType()).getShape();
+      auto initTensor = rewriter.create<tensor::EmptyOp>(loc, resIdxShape, rewriter.getI32Type());
+      auto fillOp = rewriter.create<linalg::FillOp>(loc, ValueRange{zeroI32}, ValueRange{initTensor});
+      resIdx.replaceAllUsesWith(fillOp.getResult(0));
   }
 
   return success();
@@ -912,9 +952,11 @@ LogicalResult ReduceConverter::convertToTargetOpExtended(
         b.create<linalg::YieldOp>(loc, results);
       });
 
-  if (failed(addReduceWithIndexAttrIfNeeded(rewriter, linalgOp))) {
+  auto reduceWithIndexParams = getReduceWithIndexParams(op);
+  if (!reduceWithIndexParams.has_value()) {
     return rewriter.notifyMatchFailure(op, "meaningless reduce operation");
   }
+  addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
 
   if (isScalarReduce) {
     SmallVector<Value> reduceResults;
@@ -992,12 +1034,6 @@ ScanConverter::convertToTargetOp(triton::ScanOp op,
     auto loc = op.getLoc();
 
     Value scanInput = op.getOperand(0);
-
-    scanInput.dump();
-
-    for (Value operand : op->getOperands()) {
-      operand.dump();
-    }
 
     auto srcType = mlir::dyn_cast<RankedTensorType>(scanInput.getType());
     if (!srcType) {
@@ -1681,13 +1717,6 @@ LogicalResult DevicePrintConverter::matchAndRewrite(
 LogicalResult DeviceAssertConverter::matchAndRewrite(
     triton::AssertOp op, OpAdaptor adaptor,
     mlir::ConversionPatternRewriter &rewriter) const {
-  // Ascend910_95 does not support DeviceAssert. Thus for now
-  // we directly removes this op.
-  if (compileOn91095Flag) {
-    rewriter.eraseOp(op);
-    return success();
-  }
-
   auto msgAttr = op.getMessageAttr();
   // Filter out automatically inserted assert ops
   if (auto strAttr = mlir::dyn_cast<mlir::StringAttr>(msgAttr)) {

@@ -37,6 +37,8 @@
 
 #include "llvm/Support/Debug.h"
 
+#include <limits>
+
 namespace TTOpConverters {
 using namespace mlir;
 using namespace triton;
@@ -197,6 +199,7 @@ public:
     auto valueType = elemTypes[0];
     // tl.argmin reorder
     auto block = op.getBody();
+    bool isUnsigned = false;
     if (isa<mlir::FloatType>(valueType)) {
       arith::CmpFOp cmpFOp;
       block->walk([&](arith::CmpFOp cmpOp) {
@@ -220,6 +223,10 @@ public:
       arith::CmpIOp cmpIOp;
       block->walk([&](arith::CmpIOp cmpOp) {
         auto pred = cmpOp.getPredicate();
+        if (pred == arith::CmpIPredicate::ugt ||
+            pred == arith::CmpIPredicate::ult) {
+            isUnsigned = true;
+        }
         if (pred == arith::CmpIPredicate::eq ||
             pred == arith::CmpIPredicate::ne) {
           return WalkResult::advance();
@@ -242,17 +249,25 @@ public:
     if (isa<mlir::FloatType>(valueType)) {
       valueAttr = rewriter.getFloatAttr(valueType, T::getBaseReductionValue());
     } else if (isa<mlir::IntegerType>(valueType)) {
-      // TODO: support other type of int
-      valueAttr =
-          rewriter.getIntegerAttr(valueType, T::getBaseReductionIntValue());
+      if (isUnsigned) {
+        valueAttr =
+            rewriter.getIntegerAttr(valueType, T::getBaseReductionUIntValue());
+      } else {
+        valueAttr =
+            rewriter.getIntegerAttr(valueType, T::getBaseReductionIntValue());
+      }
     }
 
-    auto valuesAccBaseVal =
-        rewriter.create<arith::ConstantOp>(loc, valueType, valueAttr);
+    auto reduceWithIndexParams = getReduceWithIndexParams(op);
+    auto valuesAccBaseVal = rewriter.create<arith::ConstantOp>(loc, valueType, valueAttr);
+    int indicesInitValue =
+        (reduceWithIndexParams.has_value() && (*reduceWithIndexParams).tieBreakType == TieBreakType::RIGHT)
+        ? -1
+        : std::numeric_limits<int32_t>::max();
 
     auto indexType = elemTypes[1];
     auto indicesAccBaseVal = rewriter.create<arith::ConstantOp>(
-        loc, indexType, rewriter.getIntegerAttr(indexType, -1));
+        loc, indexType, rewriter.getIntegerAttr(indexType, indicesInitValue));
 
     auto valueResultType = dyn_cast<RankedTensorType>(op.getType(0));
     const auto isScalarReduce = valueResultType == nullptr;
@@ -289,7 +304,9 @@ public:
     // before we rewrite the argmax reduce op, we know it has return value
     // so addReduceWithIndexAttrIfNeeded won't fail
     // but ignoring it will lead to compiling failure
-    auto logicalResult = addReduceWithIndexAttrIfNeeded(rewriter, linalgOp);
+    if (reduceWithIndexParams.has_value()) {
+        addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
+    }
 
     if (isScalarReduce) {
       SmallVector<Value> reduceResults{
@@ -315,6 +332,7 @@ public:
   static float getBaseReductionValue();
 
   static int8_t getBaseReductionIntValue();
+  static uint8_t getBaseReductionUIntValue();
 
   ArgMinConverter(MLIRContext *context) : ArgMinMaxBaseConverter(context) {}
 };
@@ -330,6 +348,7 @@ public:
   static float getBaseReductionValue();
 
   static int8_t getBaseReductionIntValue();
+  static uint8_t getBaseReductionUIntValue();
 
   ArgMaxConverter(MLIRContext *context) : ArgMinMaxBaseConverter(context) {}
 };

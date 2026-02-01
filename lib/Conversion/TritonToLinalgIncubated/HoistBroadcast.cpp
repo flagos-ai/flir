@@ -57,10 +57,13 @@ BroadcastConverter::matchAndRewrite(triton::BroadcastOp op, OpAdaptor adaptor,
         op, "only support hoist broadcast for tt.ptr tensor right now.");
   }
   auto loc = op.getLoc();
-  auto resultType = dyn_cast<RankedTensorType>(op.getType());
-  BroadcastHoister hoister(resultType);
+  BroadcastHoister hoister(op);
 
-  if (hoister.parse(op, loc, rewriter).failed()) {
+  if (!hoister.canBroadcast()) {
+    return failure();
+  }
+
+  if (hoister.parse(op.getSrc(), loc, rewriter).failed()) {
     return failure();
   }
   if (hoister.replaceBroadcastOp(op, rewriter).failed()) {
@@ -69,11 +72,35 @@ BroadcastConverter::matchAndRewrite(triton::BroadcastOp op, OpAdaptor adaptor,
   return success();
 }
 
-BroadcastHoister::BroadcastHoister(RankedTensorType resultType) {
+BroadcastHoister::BroadcastHoister(triton::BroadcastOp op) {
   source = nullptr;
+  if (findSrc(op.getSrc()).failed()) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "No legal source found for broadcast op\n";
+    });
+  }
+  opToHoist = op;
+  auto resultType = dyn_cast<RankedTensorType>(op.getType());
   for (size_t i = 0; i < resultType.getShape().size(); ++i) {
     tensorSizes.push_back(resultType.getShape()[i]);
   }
+}
+
+LogicalResult BroadcastHoister::findSrc(Value operand)
+{
+    // ptr tensor can only be defined by AddPtrOp or SplatOp in this converter
+    // another broadcast to be complemented
+    if (auto op = operand.getDefiningOp<triton::AddPtrOp>()) {
+        return findSrc(op.getPtr());
+    } else if (auto op = operand.getDefiningOp<triton::SplatOp>()) {
+        source = op.getSrc();
+        return success();
+    } else {
+        LLVM_DEBUG({
+            llvm::dbgs() << "Unsupported operation in BroadcastHoister::findSrc: " << *operand.getDefiningOp() << "\n";
+        });
+        return failure();
+    }
 }
 
 LogicalResult BroadcastHoister::parse(Value operand, const Location &loc,
@@ -166,22 +193,39 @@ LogicalResult
 BroadcastHoister::parseBroadcast(triton::BroadcastOp broadcastOp,
                                  const Location &loc,
                                  ConversionPatternRewriter &rewriter) {
-  auto src = broadcastOp.getSrc();
-  if (broadcastMap.find(src) == broadcastMap.end()) {
-    if (parse(src, loc, rewriter).failed()) {
-      return failure();
-    }
-  }
-  auto broadcastedSrc = broadcastMap[src];
-  broadcastMap[broadcastOp.getResult()] = broadcastedSrc;
-  return success();
+  // Another broadcast for ptr tensor
+  // To be fixed if needed in future
+  LLVM_DEBUG({
+    llvm::dbgs() << "Now cannot handle multi broadcast for ptr tensor.\n";
+  });
+  return failure();
 }
 
 LogicalResult
 BroadcastHoister::replaceBroadcastOp(triton::BroadcastOp op,
                                      ConversionPatternRewriter &rewriter) {
-  auto newOp = broadcastMap[op.getResult()];
+  auto newOp = broadcastMap[op.getSrc()];
   rewriter.replaceOp(op, newOp);
   return success();
 }
+
+bool BroadcastHoister::canBroadcast()
+{
+    auto resultType = dyn_cast<RankedTensorType>(opToHoist.getType());
+    auto srcType = dyn_cast<RankedTensorType>(opToHoist.getSrc().getType());
+    int broadcastedDims = 0;
+    for (size_t i = 0; i < resultType.getShape().size(); ++i) {
+        if (srcType.getShape()[i] == 1 && resultType.getShape()[i] != 1) {
+            broadcastedDims++;
+        }
+    }
+    if (broadcastedDims != 1) {
+        LLVM_DEBUG({
+            llvm::dbgs() << "Now cannot handle broadcast for ptr tensor with multi broadcasted dimension.\n";
+        });
+        return false;
+    }
+    return source != nullptr && isa<triton::PointerType>(source.getType());
+}
+
 } // namespace HoistBroadcast

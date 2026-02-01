@@ -17,7 +17,7 @@ def TritonToLinalgIncubated : Pass<"triton-to-linalg-Incubated", "mlir::ModuleOp
             "bool", /*default*/"false",
             "enable nd2nz on vector">,
         Option<"enableSelectAnalysis", "enable-select-analysis",
-            "bool", /*default*/"false",
+            "bool", /*default*/"true",
             "enable select analysis">,
         Option<"compileOn91095", "compile-on-910-95", 
             "bool", /*default*/"false",
