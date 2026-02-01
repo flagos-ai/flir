@@ -14,31 +14,6 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
-//////ASCEND
-Value materializeValue(OpBuilder &builder, Location loc, OpFoldResult ofr) { 
-  if (auto val = ofr.dyn_cast<Value>()) {
-    return val;
-  }
-
-  auto intVal = getIntAttr(ofr);
-  if (intVal.has_value()) {
-    return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(intVal.value()));
-  }
-  assert(intVal.has_value());
-  return Value();
-
-  // return builder.create<arith::ConstantIndexOp>(
-  //     loc, dyn_cast<IntegerAttr>(attr).getInt());
-}
-
-////////ASCEND
-
-std::optional<int64_t> getIntAttr(const OpFoldResult ofr) {
-  if (isa<Attribute>(ofr) && isa<IntegerAttr>(cast<Attribute>(ofr)))
-    return dyn_cast<IntegerAttr>(cast<Attribute>(ofr)).getInt();
-
-  return std::nullopt;
-}
 
 bool hasConstZero(const OpFoldResult ofr) {
   auto intAttr = getIntAttr(ofr);
