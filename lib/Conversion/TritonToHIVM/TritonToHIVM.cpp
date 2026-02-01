@@ -31,6 +31,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 
+#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 namespace mlir {
 namespace triton {
 #define GEN_PASS_DEF_TRITONTOHIVM
@@ -119,13 +120,16 @@ struct TritonCustomOpToHIVMSyncOpConversion
       if (arg == "all_cube") {
         CreateSyncBlock(rewriter, loc, ctx, op, id,
                         hivm::SyncBlockMode::ALL_CUBE,
-                        PipeAttr::get(ctx, PIPE::PIPE_FIX), hivm::PipeAttr{});
+                        PipeAttr::get(ctx, PIPE::PIPE_FIX),
+                        hivm::PipeAttr{});
       } else if (arg == "all_vector") {
         CreateSyncBlock(rewriter, loc, ctx, op, id,
-                        hivm::SyncBlockMode::ALL_VECTOR, hivm::PipeAttr{},
+                        hivm::SyncBlockMode::ALL_VECTOR,
+                        hivm::PipeAttr{},
                         PipeAttr::get(ctx, PIPE::PIPE_MTE3));
       } else if (arg == "all") {
-        CreateSyncBlock(rewriter, loc, ctx, op, id, hivm::SyncBlockMode::ALL,
+        CreateSyncBlock(rewriter, loc, ctx, op, id,
+                        hivm::SyncBlockMode::ALL,
                         PipeAttr::get(ctx, PIPE::PIPE_FIX),
                         PipeAttr::get(ctx, PIPE::PIPE_MTE3));
       } else {
