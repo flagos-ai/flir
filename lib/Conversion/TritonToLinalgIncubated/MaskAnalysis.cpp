@@ -43,7 +43,7 @@ namespace mlir {
 
 namespace triton {
 
-namespace {
+namespace Incubated{
 
 template <typename MemAccOpTy>
 std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
@@ -62,10 +62,6 @@ std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder
   }
   return mstate;
 }
-
-} // namespace
-
-namespace Incubated {
 
 LogicalResult MaskState::parse(Value operand, const Location &loc,
                                OpBuilder &builder) {
@@ -649,7 +645,6 @@ void MaskState::eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter) {
   }
 }
 
-} // namespace Incubated
 
 std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder)
 {
@@ -664,6 +659,8 @@ std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &bu
   }
   return std::nullopt;
 }
+
+} // namespace Incubated
 
 } // namespace triton
 

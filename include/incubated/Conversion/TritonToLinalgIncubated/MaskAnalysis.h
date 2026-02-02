@@ -140,9 +140,8 @@ private:
                                 const Location &loc, OpBuilder &builder);
 };
 
-} // namespace Incubated
-
 std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder);
+} // namespace Incubated
 
 } // namespace triton
 

@@ -283,7 +283,7 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     }
   }
   
-  std::optional<triton::Incubated::MaskState> mstate = triton::Incubated::runMaskAnalysis(op, static_cast<OpBuilder&>(rewriter));
+  std::optional<Incubated::MaskState> mstate = Incubated::runMaskAnalysis(op, static_cast<OpBuilder&>(rewriter));
 
   if (op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
     if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
