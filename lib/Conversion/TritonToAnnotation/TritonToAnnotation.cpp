@@ -47,10 +47,10 @@ struct TritonToAnnotationPass
 } // namespace
 
 struct TritonAnnotationConversionPattern
-    : OpRewritePattern<triton::AnnotationOp> {
-  using OpRewritePattern<triton::AnnotationOp>::OpRewritePattern;
+    : OpRewritePattern<mlir::triton::AnnotationOp> {
+  using OpRewritePattern<mlir::triton::AnnotationOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(triton::AnnotationOp op,
+  LogicalResult matchAndRewrite(mlir::triton::AnnotationOp op,
                                 PatternRewriter &rewriter) const final {
     auto markOp = rewriter.create<annotation::MarkOp>(op.getLoc(), op.getSrc());
     // Forward all annotations.

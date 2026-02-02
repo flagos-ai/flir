@@ -6,6 +6,7 @@ add_triton_library(TritonToAnnotation
 
   LINK_LIBS
   BiShengIRAnnotationDialect
+  BiShengIRDialectUtils
   MLIRIR
   MLIRPass
   MLIRTransforms

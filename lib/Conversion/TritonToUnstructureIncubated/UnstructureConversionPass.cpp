@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,7 +22,9 @@
 
 #include "incubated/Conversion/TritonToUnstructureIncubated/UnstructureConversionPass.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -49,7 +51,7 @@ bool forceSimtTemplateFlag = false;
 template <typename MemAccOpTy>
 bool UnstructuredMemAccessConverter<MemAccOpTy>::checkUnstructureAnnotated(
     MemAccOpTy op, PatternRewriter &rewriter) const {
-  return llvm::any_of(op->getUsers(), [&rewriter](Operation *user) {
+  return llvm::any_of(op->getUsers(), [&rewriter](Operation *user) {    
     auto annotationOp = dyn_cast<annotation::MarkOp>(user);
     if (annotationOp && annotationOp->hasAttr("mayDiscretememaccess")) {
       rewriter.eraseOp(annotationOp);
@@ -62,7 +64,7 @@ bool UnstructuredMemAccessConverter<MemAccOpTy>::checkUnstructureAnnotated(
 template <>
 bool UnstructuredMemAccessConverter<triton::StoreOp>::checkUnstructureAnnotated(
     triton::StoreOp op, PatternRewriter &rewriter) const {
-  return llvm::any_of(op.getValue().getUsers(), [&rewriter](Operation *user) {
+  return llvm::any_of(op.getValue().getUsers(), [&rewriter](Operation *user) {   
     auto annotationOp = dyn_cast<annotation::MarkOp>(user);
     if (annotationOp && annotationOp->hasAttr("mayDiscretememaccess")) {
       rewriter.eraseOp(annotationOp);
@@ -235,8 +237,7 @@ UnstructuredMemAccessConverter<MemAccOpTy>::UnstructuredMemAccessConverter(
     const llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap,
     const llvm::SmallDenseMap<Value, bool> &fromTensorArg)
     : OpRewritePattern<MemAccOpTy>(context),
-      forceScalarizeMode(forceScalarizeMode), offsetMap(offsetMap),
-      fromTensorArg(fromTensorArg) {}
+      forceScalarizeMode(forceScalarizeMode), offsetMap(offsetMap), fromTensorArg(fromTensorArg) {}
 
 template <typename MemAccOpTy>
 LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
@@ -275,11 +276,14 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     os << ptrOffsetInfo.isScalarLike() << "\n";
   });
 
-  if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>)
+  if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
     if (ptrOffsetInfo.isScalarLike()) {
       splatAndLoadScenario(op, ptrOffsetInfo.getRank(), rewriter);
       return success();
     }
+  }
+  
+  std::optional<triton::Incubated::MaskState> mstate = triton::Incubated::runMaskAnalysis(op, static_cast<OpBuilder&>(rewriter));
 
   if (op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
     if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
@@ -340,26 +344,23 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
   // Force scalarize if memory is not aligned
   if (sizeInByte % 32 != 0)
     ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
-
+  
   LLVM_DEBUG({
     auto &os = llvm::dbgs();
     os << "UnStructured Flag check:\n";
-    os << "ptrOffsetInfo.isStructured: " << ptrOffsetInfo.isStructured()
-       << "\n";
+    os << "ptrOffsetInfo.isStructured: " << ptrOffsetInfo.isStructured() << "\n";
     os << "compileOn91095Flag: " << compileOn91095Flag << "\n";
     os << "forceSimtTemplateFlag: " << forceSimtTemplateFlag << "\n";
   });
-
+  
   // Fast path on A5: rewrite tt.load/store to tt.indirect_load/store directly.
-  if (compileOn91095Flag && forceSimtTemplateFlag &&
-      !ptrOffsetInfo.isStructured()) {
+  if (compileOn91095Flag && forceSimtTemplateFlag && !ptrOffsetInfo.isStructured()) {
     if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
-      assert(isa<triton::PointerType>(srcPtr.getType()) &&
-             "src must be ptr type");
+      assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
       Value mask = op.getMask();
       Value other = op.getOther();
       auto resultType = op.getType();
-      auto indirect = rewriter.create<triton::IndirectLoadOp>(
+      auto indirect = rewriter.create<triton::ascend::IndirectLoadOp>(
           loc, resultType, srcPtr, ptrOffset, mask, other);
       rewriter.replaceOp(op, indirect.getResult());
       LLVM_DEBUG({
@@ -369,11 +370,10 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
       });
       return success();
     } else if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
-      assert(isa<triton::PointerType>(srcPtr.getType()) &&
-             "src must be ptr type");
+      assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
       Value value = op.getValue();
       Value mask = op.getMask();
-      auto indirect = rewriter.create<triton::IndirectStoreOp>(
+      auto indirect = rewriter.create<triton::ascend::IndirectStoreOp>(
           loc, srcPtr, ptrOffset, value, mask);
       rewriter.eraseOp(op);
       LLVM_DEBUG({
@@ -422,6 +422,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
               loc, rewriter.getIndexType(), tptShape);
         }
         sizeVal = rewriter.create<arith::MinSIOp>(loc, sizeVal, tptShape);
+      } else if (mstate) {
+        sizeVal = getValueOrCreateConstantIndexOp(rewriter, loc, mstate->dims[i]);
       }
       if (isLoadLike) {
         forOp = rewriter.create<scf::ForOp>(loc, zeroIdx, sizeVal, oneIdx,
@@ -454,8 +456,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
       auto I64Type = rewriter.getIntegerType(64);
       srcPtr = mtptOp.getBase();
       extractedOffset = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-      for (auto [indVar, offset, stride] : llvm::zip_equal(
-               offsets, ptrOffsetInfo.getOffsets(), mtptOp.getStrides())) {
+      for (auto [indVar, offset, stride] :
+           llvm::zip_equal(offsets, ptrOffsetInfo.getOffsets(), mtptOp.getStrides())) {
         Value inductionVar = rewriter.create<arith::IndexCastOp>(
             loc, I64Type, cast<Value>(indVar));
         Value tptOffset = rewriter.create<arith::ExtSIOp>(loc, I64Type, offset);
@@ -508,8 +510,9 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     Value result;
     if (!isa<RankedTensorType>(value.getType()) &&
         (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp> ||
-         std::is_same_v<MemAccOpTy, triton::AtomicCASOp>)) {
-      value = rewriter.create<triton::SplatOp>(loc, extractedType, value);
+        std::is_same_v<MemAccOpTy, triton::AtomicCASOp>)) {
+      value =	
+          rewriter.create<triton::SplatOp>(loc, extractedType, value);
     }
     if (!isa<RankedTensorType>(value.getType())) {
       SmallVector<Value> indices;
@@ -522,14 +525,15 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
           indices.push_back(idxVal);
         }
       }
-      result = rewriter.create<tensor::InsertOp>(loc, value, iterArg, indices);
+      result = rewriter.create<tensor::InsertOp>(
+          loc, value, iterArg, indices);
     } else {
-      result = rewriter.create<tensor::InsertSliceOp>(loc, value, iterArg,
-                                                      offsets, sizes, strides);
+      result = rewriter.create<tensor::InsertSliceOp>(
+          loc, value, iterArg, offsets, sizes, strides);
     }
     rewriter.create<scf::YieldOp>(loc, result)
-        ->setAttr(ConverterUtils::discreteAttrName,
-                  UnitAttr::get(rewriter.getContext()));
+          ->setAttr(ConverterUtils::discreteAttrName,
+                    UnitAttr::get(rewriter.getContext()));
     rewriter.restoreInsertionPoint(insertPoint);
     if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
       if (op.getMask() && op.getOther()) {
@@ -547,10 +551,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
   } else {
     if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp>) {
       if (fullyUnstructured && accessedOp.getMask()) {
-        auto mask = createExtractOp(
-            loc, accessedOp.getMask(), rewriter,
-            SmallVector<OpFoldResult>(ptrOffsetInfo.getRank(),
-                                      rewriter.getIndexAttr(0)));
+        auto mask = createExtractOp(loc, accessedOp.getMask(), rewriter,
+                                    SmallVector<OpFoldResult>(ptrOffsetInfo.getRank(), rewriter.getIndexAttr(0)));
         rewriter.create<scf::IfOp>(loc, mask, [&](OpBuilder &b, Location loc) {
           b.create<triton::AtomicRMWOp>(
                loc, accessedOp.getType(), accessedOp.getAtomicRmwOp(),
@@ -584,12 +586,11 @@ void replaceOperands(MutableArrayRef<OpOperand> oprs, RewriterBase &rewriter,
         tensorType && isa<triton::PointerType>(tensorType.getElementType())) {
       parse(operand, operand.getLoc(), rewriter, offsetMap);
       opr.set(offsetMap.at(operand).getOffset());
-    } else if (auto ptrType =
-                   dyn_cast<triton::PointerType>(operand.getType())) {
+    } else if (auto ptrType = dyn_cast<triton::PointerType>(operand.getType())) {
       parse(operand, operand.getLoc(), rewriter, offsetMap);
       if (auto tensorType =
               dyn_cast<RankedTensorType>(ptrType.getPointeeType())) {
-        for (auto offset : offsetMap.at(operand).getOffsets()) {
+        for (auto offset: offsetMap.at(operand).getOffsets()) {
           it->set(offset);
           ++it;
         }
@@ -634,25 +635,23 @@ void replaceArgs(ValueRange args, RewriterBase &rewriter,
         rewriter.setInsertionPointAfterValue(arg);
       }
       auto tempVar = rewriter
-                         .create<UnrealizedConversionCastOp>(
-                             arg.getLoc(), arg.getType(), ValueRange({}))
-                         ->getResult(0);
+                        .create<UnrealizedConversionCastOp>(
+                            arg.getLoc(), arg.getType(), ValueRange({}))
+                        ->getResult(0);
       parse(arg, arg.getLoc(), rewriter, offsetMap);
       rewriter.replaceAllUsesWith(arg, tempVar);
       if (auto tensorType =
               dyn_cast<RankedTensorType>(ptrType.getPointeeType())) {
-        auto srcOp =
-            offsetMap.at(arg).getPtr().getDefiningOp<triton::MakeTensorPtrOp>();
+        auto srcOp = offsetMap.at(arg).getPtr().getDefiningOp<triton::MakeTensorPtrOp>();
         arg.setType(rewriter.getIntegerType(32));
         SmallVector<Value> newOffsets;
-        for (auto offset : offsetMap.at(arg).getOffsets()) {
+        for (auto offset: offsetMap.at(arg).getOffsets()) {
           newOffsets.push_back(*it);
           ++it;
         }
         --it;
         rewriter.replaceOpWithNewOp<triton::MakeTensorPtrOp>(
-            tempVar.getDefiningOp(), tempVar.getType(), srcOp.getBase(),
-            srcOp.getShape(), srcOp.getStrides(), newOffsets, srcOp.getOrder());
+          tempVar.getDefiningOp(), tempVar.getType(), srcOp.getBase(), srcOp.getShape(), srcOp.getStrides(), newOffsets, srcOp.getOrder());  
       } else {
         auto src = offsetMap.at(arg).getPtr();
         arg.setType(rewriter.getIntegerType(64));
@@ -698,8 +697,7 @@ int getPtrTensorRank(Type type) {
   return 0;
 }
 
-SmallVector<Value> constructOperands(ValueRange operands, Value tempVar,
-                                     IRMapping mapping) {
+SmallVector<Value> constructOperands(ValueRange operands, Value tempVar, IRMapping mapping) {
   SmallVector<Value> newOperands;
   for (auto opr : operands) {
     opr = mapping.lookupOrDefault(opr);
@@ -743,8 +741,7 @@ void replacePtrLoopArguments(Operation *rootOp,
         if (auto forOp = dyn_cast<scf::ForOp>(op.getOperation())) {
           newOp = rewriter.create<scf::ForOp>(
               forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
-              forOp.getStep(),
-              constructOperands(forOp.getInitArgs(), tempVar, mapping),
+              forOp.getStep(), constructOperands(forOp.getInitArgs(), tempVar, mapping),
               [&](OpBuilder &b, Location loc, Value iv, ValueRange args) {
                 mapping.map(forOp.getInductionVar(), iv);
                 auto newArgIter = args.begin();
@@ -762,6 +759,7 @@ void replacePtrLoopArguments(Operation *rootOp,
                     yieldOp.getLoc(),
                     constructOperands(yieldOp.getOperands(), tempVar, mapping));
               });
+          newOp->setAttrs(op->getAttrs());
         } else if (auto whileOp = dyn_cast<scf::WhileOp>(op.getOperation())) {
           newOp = rewriter.create<scf::WhileOp>(
               whileOp.getLoc(), constructTypes(whileOp->getResultTypes()),
@@ -779,8 +777,7 @@ void replacePtrLoopArguments(Operation *rootOp,
                 }
                 auto conditionOp = whileOp.getConditionOp();
                 b.create<scf::ConditionOp>(
-                    conditionOp.getLoc(),
-                    mapping.lookup(conditionOp.getCondition()),
+                    conditionOp.getLoc(), mapping.lookup(conditionOp.getCondition()),
                     constructOperands(conditionOp.getArgs(), tempVar, mapping));
               },
               [&](OpBuilder &b, Location loc, ValueRange args) {
@@ -790,8 +787,7 @@ void replacePtrLoopArguments(Operation *rootOp,
                   std::advance(newArgIter,
                                std::max(getPtrTensorRank(oldArg.getType()), 1));
                 }
-                for (auto &bodyOp :
-                     whileOp.getAfterBody()->without_terminator()) {
+                for (auto &bodyOp : whileOp.getAfterBody()->without_terminator()) {
                   b.clone(bodyOp, mapping);
                 }
                 auto yieldOp = whileOp.getYieldOp();
@@ -803,9 +799,10 @@ void replacePtrLoopArguments(Operation *rootOp,
           llvm_unreachable("Unsupported loop op");
         }
         auto resIter = newOp->result_begin();
-        for (auto res : op->getResults()) {
+        for (auto res: op->getResults()) {
           rewriter.replaceAllUsesWith(res, *resIter);
-          std::advance(resIter, std::max(getPtrTensorRank(res.getType()), 1));
+          std::advance(resIter,
+                               std::max(getPtrTensorRank(res.getType()), 1));
         }
         rewriter.eraseOp(op);
         op = newOp;
@@ -838,7 +835,7 @@ void TritonToUnstructureIncubatedPass::runPreparse(LoopLikeOpInterface op) {
     yields = op.getYieldedValues();
   }
 
-  for (auto [arg, yield] : llvm::zip_equal(args, yields)) {
+  for (auto[arg, yield] : llvm::zip_equal(args, yields)) {
     if (auto tensorType = dyn_cast<RankedTensorType>(yield.getType())) {
       parse(yield, loc, rewriter, offsetMapForLoopArgs);
       offsetMap[arg] = offsetMapForLoopArgs.at(yield);
@@ -853,8 +850,7 @@ void TritonToUnstructureIncubatedPass::runPreparse(LoopLikeOpInterface op) {
   }
 }
 
-static bool isFromTensorArg(Value v,
-                            llvm::SmallDenseMap<Value, bool> &fromTensorArg) {
+static bool isFromTensorArg(Value v, llvm::SmallDenseMap<Value, bool> &fromTensorArg) {
   if (fromTensorArg.contains(v))
     return fromTensorArg.at(v);
   auto *defOp = v.getDefiningOp();
@@ -862,12 +858,12 @@ static bool isFromTensorArg(Value v,
     fromTensorArg[v] = isa<RankedTensorType>(v.getType());
     return isa<RankedTensorType>(v.getType());
   }
-  for (auto opr : defOp->getOperands()) {
-    if (isFromTensorArg(opr, fromTensorArg)) {
-      fromTensorArg[v] = true;
-      return true;
+    for (auto opr : defOp->getOperands()) {
+      if (isFromTensorArg(opr, fromTensorArg)) {
+        fromTensorArg[v] = true;
+        return true;
+      }
     }
-  }
   fromTensorArg[v] = false;
   return false;
 }
@@ -950,8 +946,7 @@ void TritonToUnstructureIncubatedPass::getDependentDialects(
                   triton::TritonDialect>();
 }
 
-std::unique_ptr<OperationPass<ModuleOp>>
-triton::createTritonToUnstructureIncubatedPass(
+std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructureIncubatedPass(
     const TritonToUnstructureIncubatedOptions &options) {
   return std::make_unique<TritonToUnstructureIncubatedPass>(options);
 }

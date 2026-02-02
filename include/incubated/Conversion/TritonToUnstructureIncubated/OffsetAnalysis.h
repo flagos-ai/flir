@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -80,10 +80,8 @@ public:
   explicit PtrOffsetInfo(ArrayRef<bool> structured);
   explicit PtrOffsetInfo(const Value &ptr, bool structured);
   explicit PtrOffsetInfo(const Value &ptr, ArrayRef<bool> structured);
-  explicit PtrOffsetInfo(const Value &ptr, const Value &offset,
-                         bool structured);
-  explicit PtrOffsetInfo(const Value &ptr, const Value &offset,
-                         ArrayRef<bool> structured);
+  explicit PtrOffsetInfo(const Value &ptr, const Value &offset, bool structured);
+  explicit PtrOffsetInfo(const Value &ptr, const Value &offset, ArrayRef<bool> structured);
 
   PtrOffsetInfo &operator=(const PtrOffsetInfo &other);
 
@@ -112,7 +110,6 @@ public:
   bool isUnstructured() const;
 
   void setZeroOffset();
-
 private:
   Value ptr;
   Value offset;
@@ -158,7 +155,7 @@ void parseBinaryOp(BinOpTy op, const Location &loc, RewriterBase &rewriter,
 
 void parseAddI(arith::AddIOp op, const Location &loc, RewriterBase &rewriter,
                llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
-
+            
 void parseSubI(arith::SubIOp op, const Location &loc, RewriterBase &rewriter,
                llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
@@ -167,7 +164,8 @@ void parseIndexCast(arith::IndexCastOp op, const Location &loc,
                     llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
 template <typename ConstOpTy>
-void parseConstantOp(ConstOpTy dst, const Location &loc, RewriterBase &rewriter,
+void parseConstantOp(ConstOpTy dst, const Location &loc,
+                     RewriterBase &rewriter,
                      llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
 void parseMakeRange(triton::MakeRangeOp op, const Location &loc,
@@ -211,9 +209,10 @@ void parseSIToFP(arith::SIToFPOp op, const Location &loc,
                  RewriterBase &rewriter,
                  llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
-void parseMakeTensorDesc(triton::MakeTensorDescOp op, const Location &loc,
-                         RewriterBase &rewriter,
-                         llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
+// FIXME:Z|wait triton version upgrade to 3.4
+// void parseMakeTensorDesc(triton::MakeTensorDescOp op, const Location &loc,
+//                          RewriterBase &rewriter,
+//                          llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
 void parseMakeTensorPtr(triton::MakeTensorPtrOp op, const Location &loc,
                         RewriterBase &rewriter,
@@ -237,8 +236,7 @@ void parseIf(scf::IfOp op, const Location &loc, RewriterBase &rewriter,
 void parseYield(scf::YieldOp op, const Location &loc, RewriterBase &rewriter,
                 llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
-void parseLoopOp(LoopLikeOpInterface op, const Location &loc,
-                 RewriterBase &rewriter,
+void parseLoopOp(LoopLikeOpInterface op, const Location &loc, RewriterBase &rewriter,
                  llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap, Value dst);
 
 void parseExtractSlice(tensor::ExtractSliceOp op, const Location &loc,
