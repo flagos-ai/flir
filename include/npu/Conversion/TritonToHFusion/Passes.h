@@ -24,14 +24,15 @@
 #define TRITON_TO_HFUSION_CONVERSION_PASSES_H
 
 #include "mlir/Pass/Pass.h"
-#include "npu/Conversion/TritonToHFusion/TritonToHFusion.h"
 
 namespace mlir {
 // Forward declarations.
+class ModuleOp;
 
 namespace triton {
 
 /// Creates a pass to convert Triton dialect to HFusion dialect.
+std::unique_ptr<OperationPass<ModuleOp>> createTritonToHFusionPass();
 
 #define GEN_PASS_REGISTRATION
 #include "npu/Conversion/TritonToHFusion/Passes.h.inc"
