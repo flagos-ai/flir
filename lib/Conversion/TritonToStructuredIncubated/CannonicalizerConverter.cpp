@@ -19,7 +19,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
- 
+
 #include "incubated/Conversion/TritonToStructuredIncubated/CannonicalizerConverter.h"
 
 #include <cassert>
@@ -58,11 +58,11 @@
 
 #include "llvm/Support/Debug.h"
 
-#include "incubated/Conversion/TritonToStructuredIncubated/TritonToStructuredIncubatedPass.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
+#include "incubated/Conversion/TritonToStructuredIncubated/TritonToStructuredIncubatedPass.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 
 #define DEBUG_TYPE "triton-cannonicalizer-converter"
 
@@ -70,8 +70,8 @@ namespace CannonicalizerConverter {
 using namespace mlir;
 using namespace triton;
 
-// Match and rewrite pattern for optimizing cmp.ne (select(cond, 1, 0), 0) -> cond
-// This pattern transforms:
+// Match and rewrite pattern for optimizing cmp.ne (select(cond, 1, 0), 0) ->
+// cond This pattern transforms:
 //   %select = arith.select %cond, %true_val, %false_val
 //   %cmp = arith.cmpi ne, %select, %zero
 // Where:
@@ -84,70 +84,71 @@ using namespace triton;
 // This optimization is valid because:
 //   select(cond, 1, 0) != 0
 //   is equivalent to: cond != 0
-//   Since the result of select is either 1 or 0, the only way it's not equal to 0
-//   is when it's 1, which happens exactly when cond is true.
+//   Since the result of select is either 1 or 0, the only way it's not equal to
+//   0 is when it's 1, which happens exactly when cond is true.
 //
 // Example:
 //   Input IR:
 //     %39 = arith.cmpi slt, %15, %cst_14 : tensor<128xi32>
-//     %40 = arith.select %39, %cst_13, %cst_12 : tensor<128xi1>, tensor<128xi32>
-//     %41 = arith.cmpi ne, %40, %cst_12 : tensor<128xi32>
+//     %40 = arith.select %39, %cst_13, %cst_12 : tensor<128xi1>,
+//     tensor<128xi32> %41 = arith.cmpi ne, %40, %cst_12 : tensor<128xi32>
 //   Where cst_13 is constant dense<1> and cst_12 is constant dense<0>
 //   Output IR:
 //     %39 = arith.cmpi slt, %15, %cst_14 : tensor<128xi32>
-LogicalResult
-CmpConverter::matchAndRewrite(arith::CmpIOp cmpOp,
-                              PatternRewriter &rewriter) const {
-    // Only handle "not equal" comparison
-    auto cmpType = cmpOp.getPredicate();
-    if (cmpType != arith::CmpIPredicate::ne) {
-        return failure();
-    }
+LogicalResult CmpConverter::matchAndRewrite(arith::CmpIOp cmpOp,
+                                            PatternRewriter &rewriter) const {
+  // Only handle "not equal" comparison
+  auto cmpType = cmpOp.getPredicate();
+  if (cmpType != arith::CmpIPredicate::ne) {
+    return failure();
+  }
 
-    Value rhs = cmpOp.getRhs();
-    Value lhs = cmpOp.getLhs();
+  Value rhs = cmpOp.getRhs();
+  Value lhs = cmpOp.getLhs();
 
-    // 1. Check if RHS is a constant zero
-    APInt rhsValue;
-    if (!matchPattern(rhs, m_ConstantInt(&rhsValue))) {
-        return failure();  // RHS is not a constant
-    }
-    
-    if (!rhsValue.isZero()) {
-        return failure();  // RHS is not zero
-    }
+  // 1. Check if RHS is a constant zero
+  APInt rhsValue;
+  if (!matchPattern(rhs, m_ConstantInt(&rhsValue))) {
+    return failure(); // RHS is not a constant
+  }
 
-    // 2. Check if LHS is defined by a select operation
-    auto selectOp = lhs.getDefiningOp<arith::SelectOp>();
-    if (!selectOp) {
-        return failure();
-    }
+  if (!rhsValue.isZero()) {
+    return failure(); // RHS is not zero
+  }
 
-    // 3. Check if select's true and false values are constants
-    DenseElementsAttr trueAttr;
-    DenseElementsAttr falseAttr;
-    if (!matchPattern(selectOp.getTrueValue(), m_Constant(&trueAttr)) ||
-        !matchPattern(selectOp.getFalseValue(), m_Constant(&falseAttr))) {
-        return failure();  // Either true or false value is not constant
-    }
+  // 2. Check if LHS is defined by a select operation
+  auto selectOp = lhs.getDefiningOp<arith::SelectOp>();
+  if (!selectOp) {
+    return failure();
+  }
 
-    // 4. Check if true value is all 1s and false value is all 0s
-    if (!trueAttr.isSplat() || !trueAttr.getSplatValue<APInt>().isOne() ||
-        !falseAttr.isSplat() || !falseAttr.getSplatValue<APInt>().isZero()) {
-        return failure();
-    }
-    
-    // 5. Optimization matched, replace cmp with select's condition
-    rewriter.replaceOp(cmpOp, selectOp.getCondition());
-    return success();
+  // 3. Check if select's true and false values are constants
+  DenseElementsAttr trueAttr;
+  DenseElementsAttr falseAttr;
+  if (!matchPattern(selectOp.getTrueValue(), m_Constant(&trueAttr)) ||
+      !matchPattern(selectOp.getFalseValue(), m_Constant(&falseAttr))) {
+    return failure(); // Either true or false value is not constant
+  }
+
+  // 4. Check if true value is all 1s and false value is all 0s
+  if (!trueAttr.isSplat() || !trueAttr.getSplatValue<APInt>().isOne() ||
+      !falseAttr.isSplat() || !falseAttr.getSplatValue<APInt>().isZero()) {
+    return failure();
+  }
+
+  // 5. Optimization matched, replace cmp with select's condition
+  rewriter.replaceOp(cmpOp, selectOp.getCondition());
+  return success();
 }
 
 // Transform a for loop that uses pointer iteration arguments into one that uses
 // integer offsets instead. This pattern handles the specific case where:
-// 1. The loop has pointer iteration arguments of type like tensor<1024x!tt.ptr<f32>>
+// 1. The loop has pointer iteration arguments of type like
+// tensor<1024x!tt.ptr<f32>>
 // 2. Each pointer is used in a load/store operation and then incremented by
 //    a constant offset via tt.addptr
-// 3. The updated pointer (from addptr) is yielded back as the next iteration value
+// 3. The updated pointer (from addptr) is yielded back as the next iteration
+// value
 //
 // The transformation converts:
 //   scf.for iter_args(%ptr = %base_ptr) {
@@ -169,444 +170,436 @@ CmpConverter::matchAndRewrite(arith::CmpIOp cmpOp,
 //
 LogicalResult PromotePointerIterArgsPattern::matchAndRewrite(
     scf::ForOp forOp, PatternRewriter &rewriter) const {
-    // 1. Check if the loop meets transformation conditions
-    if (failed(matchLoop(forOp))) {
-        return failure();
-    }
+  // 1. Check if the loop meets transformation conditions
+  if (failed(matchLoop(forOp))) {
+    return failure();
+  }
 
-    // 2. Collect pointer iteration arguments to be processed
-    auto pointerArgsInfo = collectPointerIterArgs(forOp);
-    if (pointerArgsInfo.empty()) {
-        return failure();
-    }
+  // 2. Collect pointer iteration arguments to be processed
+  auto pointerArgsInfo = collectPointerIterArgs(forOp);
+  if (pointerArgsInfo.empty()) {
+    return failure();
+  }
 
-    // 3. Create new iteration argument types and initial values
-    auto [newInitArgs, newIterArgTypes, indexMap] =
-        createNewIterArgs(forOp, pointerArgsInfo, rewriter);
+  // 3. Create new iteration argument types and initial values
+  auto [newInitArgs, newIterArgTypes, indexMap] =
+      createNewIterArgs(forOp, pointerArgsInfo, rewriter);
 
-    // 4. Create the new for loop
-    auto newForOp = createNewForLoop(forOp, newInitArgs, newIterArgTypes, rewriter);
-    
-    // 5. Rewrite the loop body
-    if (failed(rewriteLoopBody(forOp, newForOp, pointerArgsInfo, indexMap, rewriter))) {
-        return failure();
-    }
-    
-    // 6. Replace original loop results
-    return replaceResults(forOp, newForOp, pointerArgsInfo, indexMap, rewriter);
+  // 4. Create the new for loop
+  auto newForOp =
+      createNewForLoop(forOp, newInitArgs, newIterArgTypes, rewriter);
+
+  // 5. Rewrite the loop body
+  if (failed(rewriteLoopBody(forOp, newForOp, pointerArgsInfo, indexMap,
+                             rewriter))) {
+    return failure();
+  }
+
+  // 6. Replace original loop results
+  return replaceResults(forOp, newForOp, pointerArgsInfo, indexMap, rewriter);
 }
 
-LogicalResult
-PromotePointerIterArgsPattern::matchLoop(scf::ForOp forOp) const {
-    auto lowerBound = forOp.getLowerBound();
-    auto upperBound = forOp.getUpperBound();
-    auto step = forOp.getStep();
-    if (!matchPattern(lowerBound, m_Constant()) ||
-        !matchPattern(upperBound, m_Constant()) ||
-        !matchPattern(step, m_Constant())) {
-      return failure();
-    }
-    return success();
+LogicalResult PromotePointerIterArgsPattern::matchLoop(scf::ForOp forOp) const {
+  auto lowerBound = forOp.getLowerBound();
+  auto upperBound = forOp.getUpperBound();
+  auto step = forOp.getStep();
+  if (!matchPattern(lowerBound, m_Constant()) ||
+      !matchPattern(upperBound, m_Constant()) ||
+      !matchPattern(step, m_Constant())) {
+    return failure();
+  }
+  return success();
 }
-
 
 SmallVector<PromotePointerIterArgsPattern::PointerArgInfo>
 PromotePointerIterArgsPattern::collectPointerIterArgs(scf::ForOp forOp) const {
-    SmallVector<PointerArgInfo> result;
-    auto &loopBody = *forOp.getBody();
+  SmallVector<PointerArgInfo> result;
+  auto &loopBody = *forOp.getBody();
 
-    for (auto [idx, iterArg] : llvm::enumerate(forOp.getRegionIterArgs())) {
-        if (isPointerIterArg(iterArg)) {
-            auto info = analyzePointerIterArg(iterArg, loopBody);
-            if (info.has_value()) {
-                info->oldIndex = static_cast<unsigned>(idx),
-                info->basePointer = forOp.getInitArgs()[idx],
-                result.push_back(info.value());
-            }
-        }
+  for (auto [idx, iterArg] : llvm::enumerate(forOp.getRegionIterArgs())) {
+    if (isPointerIterArg(iterArg)) {
+      auto info = analyzePointerIterArg(iterArg, loopBody);
+      if (info.has_value()) {
+        info->oldIndex = static_cast<unsigned>(idx),
+        info->basePointer = forOp.getInitArgs()[idx],
+        result.push_back(info.value());
+      }
     }
-    return result;
+  }
+  return result;
 }
 
 bool PromotePointerIterArgsPattern::isPointerIterArg(Value iterArg) const {
-    auto ptrType = dyn_cast<TensorType>(iterArg.getType());
-    return ptrType && isa<triton::PointerType>(ptrType.getElementType());
+  auto ptrType = dyn_cast<TensorType>(iterArg.getType());
+  return ptrType && isa<triton::PointerType>(ptrType.getElementType());
 }
 
 std::optional<PromotePointerIterArgsPattern::PointerArgInfo>
-PromotePointerIterArgsPattern::analyzePointerIterArg(
-    Value iterArg, Block &loopBody) const {
-    int memCount = 0;        // Count of memory operations (load/store) using this pointer
-    int addPtrCount = 0;     // Count of addptr operations on this pointer
-    Value addPtrResult = nullptr;  // Result of the addptr operation
-    Value offset = nullptr;        // Offset value used in addptr
-    Value addPtrValue = nullptr;   // The addptr operation result value
-    
-    for (auto &op : loopBody) {
-        TypeSwitch<Operation *>(&op)
-            .Case<triton::LoadOp, triton::StoreOp>([&](auto memoryOp) {
-                // Check if this memory operation uses the pointer we're analyzing
-                if (memoryOp.getPtr() == iterArg) ++memCount;
-            })
-            .Case<triton::AddPtrOp>([&](auto addPtrOp) {
-                // Check if this addptr operation updates the pointer we're analyzing
-                if (addPtrOp.getPtr() == iterArg) {
-                    ++addPtrCount;
-                    addPtrResult = addPtrOp.getResult();
-                    offset = addPtrOp.getOffset();
-                    addPtrValue = addPtrOp.getResult();
-                }
-            })
-            .Default([](auto) {});  // Ignore other operations
-    }
-    
-    // Check the terminator to see if the addptr result is yielded
-    auto yieldOp = dyn_cast<scf::YieldOp>(loopBody.getTerminator());
-    if (!yieldOp) return std::nullopt;
-    
-    bool isYielded = false;
-    for (auto operand : yieldOp.getOperands()) {
-        if (operand == addPtrResult) {
-            isYielded = true;
-            break;
-        }
-    }
-    
-    // Pattern matched if:
-    // 1. Exactly one addptr operation on this pointer
-    // 2. At least one memory operation using this pointer
-    // 3. The addptr result is yielded
-    if (addPtrCount == 1 && memCount >= 1 && isYielded) {
-        return PointerArgInfo{
-            .oldIndex = 0,
-            .basePointer = nullptr, // Will be set in collectPointerIterArgs
-            .offsetValue = offset,
-            .newIterArg = nullptr,  // Will be set in createNewIterArgs
-            .addPtrValue = addPtrValue
-        };
-    }
+PromotePointerIterArgsPattern::analyzePointerIterArg(Value iterArg,
+                                                     Block &loopBody) const {
+  int memCount =
+      0; // Count of memory operations (load/store) using this pointer
+  int addPtrCount = 0;          // Count of addptr operations on this pointer
+  Value addPtrResult = nullptr; // Result of the addptr operation
+  Value offset = nullptr;       // Offset value used in addptr
+  Value addPtrValue = nullptr;  // The addptr operation result value
+
+  for (auto &op : loopBody) {
+    TypeSwitch<Operation *>(&op)
+        .Case<triton::LoadOp, triton::StoreOp>([&](auto memoryOp) {
+          // Check if this memory operation uses the pointer we're analyzing
+          if (memoryOp.getPtr() == iterArg)
+            ++memCount;
+        })
+        .Case<triton::AddPtrOp>([&](auto addPtrOp) {
+          // Check if this addptr operation updates the pointer we're analyzing
+          if (addPtrOp.getPtr() == iterArg) {
+            ++addPtrCount;
+            addPtrResult = addPtrOp.getResult();
+            offset = addPtrOp.getOffset();
+            addPtrValue = addPtrOp.getResult();
+          }
+        })
+        .Default([](auto) {}); // Ignore other operations
+  }
+
+  // Check the terminator to see if the addptr result is yielded
+  auto yieldOp = dyn_cast<scf::YieldOp>(loopBody.getTerminator());
+  if (!yieldOp)
     return std::nullopt;
+
+  bool isYielded = false;
+  for (auto operand : yieldOp.getOperands()) {
+    if (operand == addPtrResult) {
+      isYielded = true;
+      break;
+    }
+  }
+
+  // Pattern matched if:
+  // 1. Exactly one addptr operation on this pointer
+  // 2. At least one memory operation using this pointer
+  // 3. The addptr result is yielded
+  if (addPtrCount == 1 && memCount >= 1 && isYielded) {
+    return PointerArgInfo{
+        .oldIndex = 0,
+        .basePointer = nullptr, // Will be set in collectPointerIterArgs
+        .offsetValue = offset,
+        .newIterArg = nullptr, // Will be set in createNewIterArgs
+        .addPtrValue = addPtrValue};
+  }
+  return std::nullopt;
 }
 
 std::tuple<SmallVector<Value>, SmallVector<Type>, DenseMap<unsigned, unsigned>>
-PromotePointerIterArgsPattern::createNewIterArgs(scf::ForOp forOp,
-                                                 ArrayRef<PointerArgInfo> pointerArgs,
-                                                 PatternRewriter &rewriter) const {
-    SmallVector<Value> newInitArgs;
-    SmallVector<Type> newIterArgTypes;
-    DenseMap<unsigned, unsigned> indexMap;
-    
-    for (unsigned i = 0; i < forOp.getInitArgs().size(); ++i) {
-        if (isPointerArgIndex(pointerArgs, i)) {
-            // Replace pointer with integer offset (initialized to 0)
-            Value zero = rewriter.create<arith::ConstantIntOp>(
-                forOp.getLoc(), 0, 32);
-            newInitArgs.push_back(zero);
-            newIterArgTypes.push_back(rewriter.getIntegerType(32));
-        } else {
-            // Preserve original argument unchanged
-            newInitArgs.push_back(forOp.getInitArgs()[i]);
-            newIterArgTypes.push_back(forOp.getInitArgs()[i].getType());
-        }
+PromotePointerIterArgsPattern::createNewIterArgs(
+    scf::ForOp forOp, ArrayRef<PointerArgInfo> pointerArgs,
+    PatternRewriter &rewriter) const {
+  SmallVector<Value> newInitArgs;
+  SmallVector<Type> newIterArgTypes;
+  DenseMap<unsigned, unsigned> indexMap;
 
-        // Identity mapping: argument count and order unchanged，
-        // may change in future
-        indexMap[i] = i;
+  for (unsigned i = 0; i < forOp.getInitArgs().size(); ++i) {
+    if (isPointerArgIndex(pointerArgs, i)) {
+      // Replace pointer with integer offset (initialized to 0)
+      Value zero = rewriter.create<arith::ConstantIntOp>(forOp.getLoc(), 0, 32);
+      newInitArgs.push_back(zero);
+      newIterArgTypes.push_back(rewriter.getIntegerType(32));
+    } else {
+      // Preserve original argument unchanged
+      newInitArgs.push_back(forOp.getInitArgs()[i]);
+      newIterArgTypes.push_back(forOp.getInitArgs()[i].getType());
     }
-    
-    return {newInitArgs, newIterArgTypes, indexMap};
+
+    // Identity mapping: argument count and order unchanged，
+    // may change in future
+    indexMap[i] = i;
+  }
+
+  return {newInitArgs, newIterArgTypes, indexMap};
 }
 
-scf::ForOp
-PromotePointerIterArgsPattern::createNewForLoop(scf::ForOp forOp,
-                                                ArrayRef<Value> newInitArgs,
-                                                ArrayRef<Type> newIterArgTypes,
-                                                PatternRewriter &rewriter) const {
-    return rewriter.create<scf::ForOp>(
-        forOp.getLoc(),
-        forOp.getLowerBound(),
-        forOp.getUpperBound(),
-        forOp.getStep(),
-        newInitArgs);
+scf::ForOp PromotePointerIterArgsPattern::createNewForLoop(
+    scf::ForOp forOp, ArrayRef<Value> newInitArgs,
+    ArrayRef<Type> newIterArgTypes, PatternRewriter &rewriter) const {
+  return rewriter.create<scf::ForOp>(forOp.getLoc(), forOp.getLowerBound(),
+                                     forOp.getUpperBound(), forOp.getStep(),
+                                     newInitArgs);
 }
 
-LogicalResult
-PromotePointerIterArgsPattern::rewriteLoopBody(scf::ForOp oldForOp,
-                                               scf::ForOp newForOp,
-                                               SmallVector<PointerArgInfo> &pointerArgs,
-                                               DenseMap<unsigned, unsigned> &indexMap,
-                                               PatternRewriter &rewriter) const {
-    Block &oldBody = *oldForOp.getBody();
-    Block &newBody = *newForOp.getBody();
-    
-    rewriter.setInsertionPointToStart(&newBody);
-    
-    // Create IR mapping that maps original values to their transformed equivalents
-    IRMapping mapping = createIRMapping(oldForOp, newForOp, pointerArgs, indexMap, rewriter);
+LogicalResult PromotePointerIterArgsPattern::rewriteLoopBody(
+    scf::ForOp oldForOp, scf::ForOp newForOp,
+    SmallVector<PointerArgInfo> &pointerArgs,
+    DenseMap<unsigned, unsigned> &indexMap, PatternRewriter &rewriter) const {
+  Block &oldBody = *oldForOp.getBody();
+  Block &newBody = *newForOp.getBody();
 
-    // Clone instructions from original loop body, applying the mapping
-    return cloneInstructions(oldBody, newBody, pointerArgs, indexMap, mapping, rewriter);
+  rewriter.setInsertionPointToStart(&newBody);
+
+  // Create IR mapping that maps original values to their transformed
+  // equivalents
+  IRMapping mapping =
+      createIRMapping(oldForOp, newForOp, pointerArgs, indexMap, rewriter);
+
+  // Clone instructions from original loop body, applying the mapping
+  return cloneInstructions(oldBody, newBody, pointerArgs, indexMap, mapping,
+                           rewriter);
 }
 
-IRMapping
-PromotePointerIterArgsPattern::createIRMapping(scf::ForOp oldForOp,
-                                               scf::ForOp newForOp,
-                                               SmallVector<PointerArgInfo> &pointerArgs,
-                                               DenseMap<unsigned, unsigned> &indexMap,
-                                               PatternRewriter &rewriter) const {
-    IRMapping mapping;
-    mapping.map(oldForOp.getInductionVar(), newForOp.getInductionVar());
-    
-    // Process iteration arguments
-    for (unsigned i = 0; i < oldForOp.getRegionIterArgs().size(); ++i) {
-        Value oldIterArg = oldForOp.getRegionIterArgs()[i];
-        Value newIterArg = newForOp.getRegionIterArgs()[indexMap[i]];
-        
-        if (isPointerArgIndex(pointerArgs, i)) {
-            // Update the PointerArgInfo with the new integer iteration argument
-            for (auto &info : pointerArgs) {
-                if (info.oldIndex == i) {
-                    info.newIterArg = newIterArg;
-                    break;
-                }
-            }
-            
-            // Map original pointer argument to a reconstructed pointer
-            mapping.map(oldIterArg, rebuildPointer(oldForOp, pointerArgs, i, rewriter));
-        } else {
-            // Direct mapping for non-pointer arguments
-            mapping.map(oldIterArg, newIterArg);
+IRMapping PromotePointerIterArgsPattern::createIRMapping(
+    scf::ForOp oldForOp, scf::ForOp newForOp,
+    SmallVector<PointerArgInfo> &pointerArgs,
+    DenseMap<unsigned, unsigned> &indexMap, PatternRewriter &rewriter) const {
+  IRMapping mapping;
+  mapping.map(oldForOp.getInductionVar(), newForOp.getInductionVar());
+
+  // Process iteration arguments
+  for (unsigned i = 0; i < oldForOp.getRegionIterArgs().size(); ++i) {
+    Value oldIterArg = oldForOp.getRegionIterArgs()[i];
+    Value newIterArg = newForOp.getRegionIterArgs()[indexMap[i]];
+
+    if (isPointerArgIndex(pointerArgs, i)) {
+      // Update the PointerArgInfo with the new integer iteration argument
+      for (auto &info : pointerArgs) {
+        if (info.oldIndex == i) {
+          info.newIterArg = newIterArg;
+          break;
         }
+      }
+
+      // Map original pointer argument to a reconstructed pointer
+      mapping.map(oldIterArg,
+                  rebuildPointer(oldForOp, pointerArgs, i, rewriter));
+    } else {
+      // Direct mapping for non-pointer arguments
+      mapping.map(oldIterArg, newIterArg);
     }
-    
-    return mapping;
+  }
+
+  return mapping;
 }
 
 bool PromotePointerIterArgsPattern::isPointerArgIndex(
-    ArrayRef<PointerArgInfo> pointerArgs,
-    unsigned idx) const {
-    for (auto &info : pointerArgs) {
-        if (info.oldIndex == idx) return true;
-    }
-    return false;
+    ArrayRef<PointerArgInfo> pointerArgs, unsigned idx) const {
+  for (auto &info : pointerArgs) {
+    if (info.oldIndex == idx)
+      return true;
+  }
+  return false;
 }
 
-Value PromotePointerIterArgsPattern::rebuildPointer(scf::ForOp forOp,
-                                                    ArrayRef<PointerArgInfo> pointerArgs,
-                                                    unsigned idx,
-                                                    PatternRewriter &rewriter) const {
-    const PointerArgInfo *info = nullptr;
-    for (auto &argInfo : pointerArgs) {
-        if (argInfo.oldIndex == idx) {
-            info = &argInfo;
-            break;
-        }
+Value PromotePointerIterArgsPattern::rebuildPointer(
+    scf::ForOp forOp, ArrayRef<PointerArgInfo> pointerArgs, unsigned idx,
+    PatternRewriter &rewriter) const {
+  const PointerArgInfo *info = nullptr;
+  for (auto &argInfo : pointerArgs) {
+    if (argInfo.oldIndex == idx) {
+      info = &argInfo;
+      break;
     }
-    if (!info) return nullptr;
+  }
+  if (!info)
+    return nullptr;
 
-    // Create splat operation to broadcast integer offset to tensor shape
-    auto baseType = info->basePointer.getType();
-    Value splatOffset = nullptr;
-    if (auto rankedType = dyn_cast<RankedTensorType>(baseType)) {
-        // Get the shape of the original tensor
-        auto shape = rankedType.getShape();
-        
-        splatOffset = rewriter.create<triton::SplatOp>(
-            forOp.getLoc(),
-            RankedTensorType::get(shape, rewriter.getI32Type()),
-            info->newIterArg);
-    } else {
-        return nullptr;
-    }
+  // Create splat operation to broadcast integer offset to tensor shape
+  auto baseType = info->basePointer.getType();
+  Value splatOffset = nullptr;
+  if (auto rankedType = dyn_cast<RankedTensorType>(baseType)) {
+    // Get the shape of the original tensor
+    auto shape = rankedType.getShape();
 
-    // Create addptr operation: base pointer + splatted offset
-    return rewriter.create<triton::AddPtrOp>(
-        forOp.getLoc(),
-        info->basePointer.getType(),
-        info->basePointer,
-        splatOffset);
+    splatOffset = rewriter.create<triton::SplatOp>(
+        forOp.getLoc(), RankedTensorType::get(shape, rewriter.getI32Type()),
+        info->newIterArg);
+  } else {
+    return nullptr;
+  }
+
+  // Create addptr operation: base pointer + splatted offset
+  return rewriter.create<triton::AddPtrOp>(forOp.getLoc(),
+                                           info->basePointer.getType(),
+                                           info->basePointer, splatOffset);
 }
 
 LogicalResult PromotePointerIterArgsPattern::cloneInstructions(
     Block &oldBody, Block &newBody, ArrayRef<PointerArgInfo> pointerArgs,
     DenseMap<unsigned, unsigned> &indexMap, IRMapping &mapping,
     PatternRewriter &rewriter) const {
-    // Collect all operations from the old loop body except the terminator
-    SmallVector<Operation *> toClone;
-    for (auto &op : oldBody.without_terminator()) {
-        toClone.push_back(&op);
-    }
+  // Collect all operations from the old loop body except the terminator
+  SmallVector<Operation *> toClone;
+  for (auto &op : oldBody.without_terminator()) {
+    toClone.push_back(&op);
+  }
 
-    // Build a set of addptr operations to skip (those that update pointer iteration arguments)
-    DenseSet<Value> addPtrOpsToSkip;
-    for (const auto &info : pointerArgs) {
-        if (info.addPtrValue) {
-            addPtrOpsToSkip.insert(info.addPtrValue);
-        }
+  // Build a set of addptr operations to skip (those that update pointer
+  // iteration arguments)
+  DenseSet<Value> addPtrOpsToSkip;
+  for (const auto &info : pointerArgs) {
+    if (info.addPtrValue) {
+      addPtrOpsToSkip.insert(info.addPtrValue);
     }
+  }
 
-    // Clone all operations except the skipped addptr operations
-    for (auto *op : toClone) {
-        // Only skip addptr operations that are updating pointer iteration arguments
-        if (auto addPtrOp = dyn_cast<triton::AddPtrOp>(op)) {
-            if (addPtrOpsToSkip.contains(addPtrOp.getResult())) {
-                continue;
-            }
-        }
-        rewriter.clone(*op, mapping);
+  // Clone all operations except the skipped addptr operations
+  for (auto *op : toClone) {
+    // Only skip addptr operations that are updating pointer iteration arguments
+    if (auto addPtrOp = dyn_cast<triton::AddPtrOp>(op)) {
+      if (addPtrOpsToSkip.contains(addPtrOp.getResult())) {
+        continue;
+      }
     }
+    rewriter.clone(*op, mapping);
+  }
 
-    // Handle the yield terminator separately
-    auto yieldOp = dyn_cast<scf::YieldOp>(oldBody.getTerminator());
-    if (!yieldOp) {
-        return failure();
-    }
+  // Handle the yield terminator separately
+  auto yieldOp = dyn_cast<scf::YieldOp>(oldBody.getTerminator());
+  if (!yieldOp) {
+    return failure();
+  }
 
-    return cloneYieldOp(yieldOp, pointerArgs, indexMap, mapping, rewriter);
+  return cloneYieldOp(yieldOp, pointerArgs, indexMap, mapping, rewriter);
 }
 
 LogicalResult PromotePointerIterArgsPattern::cloneYieldOp(
     scf::YieldOp yieldOp, ArrayRef<PointerArgInfo> pointerArgs,
     DenseMap<unsigned, unsigned> &indexMap, IRMapping &mapping,
     PatternRewriter &rewriter) const {
-    SmallVector<Value> newOperands;
-    // Process each operand of the original yield operation
-    for (unsigned i = 0; i < yieldOp.getNumOperands(); ++i) {
-        if (isPointerArgIndex(pointerArgs, i)) {
-            // For pointer arguments being promoted: create integer addition
-            Value intResult = createIntegerAdd(i, pointerArgs, indexMap, rewriter);
-            newOperands.push_back(intResult);
-        } else {
-            // For other arguments: use the value from the IR mapping
-            newOperands.push_back(mapping.lookupOrDefault(yieldOp.getOperand(i)));
-        }
+  SmallVector<Value> newOperands;
+  // Process each operand of the original yield operation
+  for (unsigned i = 0; i < yieldOp.getNumOperands(); ++i) {
+    if (isPointerArgIndex(pointerArgs, i)) {
+      // For pointer arguments being promoted: create integer addition
+      Value intResult = createIntegerAdd(i, pointerArgs, indexMap, rewriter);
+      newOperands.push_back(intResult);
+    } else {
+      // For other arguments: use the value from the IR mapping
+      newOperands.push_back(mapping.lookupOrDefault(yieldOp.getOperand(i)));
     }
+  }
 
-    // Validate that all new operands are non-null
-    for (auto v: newOperands) {
-        if (!v) {
-            return failure();
-        }
+  // Validate that all new operands are non-null
+  for (auto v : newOperands) {
+    if (!v) {
+      return failure();
     }
+  }
 
-    // Create the new yield operation in the transformed loop
-    rewriter.create<scf::YieldOp>(yieldOp.getLoc(), newOperands);
-    return success();
+  // Create the new yield operation in the transformed loop
+  rewriter.create<scf::YieldOp>(yieldOp.getLoc(), newOperands);
+  return success();
 }
 
-Value PromotePointerIterArgsPattern::createIntegerAdd(unsigned idx,
-                                                      ArrayRef<PointerArgInfo> pointerArgs,
-                                                      DenseMap<unsigned, unsigned> &indexMap,
-                                                      PatternRewriter &rewriter) const {
-    const PointerArgInfo *info = nullptr;
-    for (auto &argInfo : pointerArgs) {
-        if (argInfo.oldIndex == idx) {
-            info = &argInfo;
-            break;
-        }
+Value PromotePointerIterArgsPattern::createIntegerAdd(
+    unsigned idx, ArrayRef<PointerArgInfo> pointerArgs,
+    DenseMap<unsigned, unsigned> &indexMap, PatternRewriter &rewriter) const {
+  const PointerArgInfo *info = nullptr;
+  for (auto &argInfo : pointerArgs) {
+    if (argInfo.oldIndex == idx) {
+      info = &argInfo;
+      break;
     }
-    if (!info) return nullptr;
-
-    // Try to extract constant offset value
-    Attribute offsetAttr;
-    if (matchPattern(info->offsetValue, m_Constant(&offsetAttr))) {
-        Location loc = info->offsetValue.getLoc();
-
-        // Case 1: Integer attribute (scalar constant)
-        if (auto intAttr = dyn_cast<IntegerAttr>(offsetAttr)) {
-            Value constOffset = rewriter.create<arith::ConstantIntOp>(
-                loc, intAttr.getInt(), 32);
-            return rewriter.create<arith::AddIOp>(loc, info->newIterArg, constOffset);
-        }
-
-        // Case 2: DenseElementsAttr (tensor constant)
-        if (auto denseAttr = dyn_cast<DenseElementsAttr>(offsetAttr)) {
-            // Check if it's a splat (all elements are the same)
-            if (denseAttr.isSplat()) {
-                // For integer-type DenseElementsAttr
-                if (denseAttr.getElementType().isInteger(32)) {
-                    auto splatValue = denseAttr.getSplatValue<APInt>();
-                    Value constOffset = rewriter.create<arith::ConstantIntOp>(
-                        loc, splatValue.getZExtValue(), 32);
-                    return rewriter.create<arith::AddIOp>(loc, info->newIterArg, constOffset);
-                }
-            } else {
-                // If not a splat, but has only one element, we can still handle it
-                if (denseAttr.getNumElements() == 1) {
-                    auto firstElement = *denseAttr.getValues<APInt>().begin();
-                    Value constOffset = rewriter.create<arith::ConstantIntOp>(
-                        loc, firstElement.getZExtValue(), 32);
-                    return rewriter.create<arith::AddIOp>(loc, info->newIterArg, constOffset);
-                }
-            }
-        }
-    }
-    
-    // Return nullptr if offset is not a constant (pattern only handles constant offsets)
+  }
+  if (!info)
     return nullptr;
+
+  // Try to extract constant offset value
+  Attribute offsetAttr;
+  if (matchPattern(info->offsetValue, m_Constant(&offsetAttr))) {
+    Location loc = info->offsetValue.getLoc();
+
+    // Case 1: Integer attribute (scalar constant)
+    if (auto intAttr = dyn_cast<IntegerAttr>(offsetAttr)) {
+      Value constOffset =
+          rewriter.create<arith::ConstantIntOp>(loc, intAttr.getInt(), 32);
+      return rewriter.create<arith::AddIOp>(loc, info->newIterArg, constOffset);
+    }
+
+    // Case 2: DenseElementsAttr (tensor constant)
+    if (auto denseAttr = dyn_cast<DenseElementsAttr>(offsetAttr)) {
+      // Check if it's a splat (all elements are the same)
+      if (denseAttr.isSplat()) {
+        // For integer-type DenseElementsAttr
+        if (denseAttr.getElementType().isInteger(32)) {
+          auto splatValue = denseAttr.getSplatValue<APInt>();
+          Value constOffset = rewriter.create<arith::ConstantIntOp>(
+              loc, splatValue.getZExtValue(), 32);
+          return rewriter.create<arith::AddIOp>(loc, info->newIterArg,
+                                                constOffset);
+        }
+      } else {
+        // If not a splat, but has only one element, we can still handle it
+        if (denseAttr.getNumElements() == 1) {
+          auto firstElement = *denseAttr.getValues<APInt>().begin();
+          Value constOffset = rewriter.create<arith::ConstantIntOp>(
+              loc, firstElement.getZExtValue(), 32);
+          return rewriter.create<arith::AddIOp>(loc, info->newIterArg,
+                                                constOffset);
+        }
+      }
+    }
+  }
+
+  // Return nullptr if offset is not a constant (pattern only handles constant
+  // offsets)
+  return nullptr;
 }
 
 LogicalResult PromotePointerIterArgsPattern::replaceResults(
-    scf::ForOp oldForOp,
-    scf::ForOp newForOp,
+    scf::ForOp oldForOp, scf::ForOp newForOp,
     ArrayRef<PointerArgInfo> pointerArgs,
-    DenseMap<unsigned, unsigned> &indexMap,
-    PatternRewriter &rewriter) const {
-    SmallVector<Value> newResults;
-    
-    for (unsigned i = 0; i < oldForOp.getNumResults(); ++i) {
-        if (isPointerArgIndex(pointerArgs, i)) {
-            Value ptrResult = reconstructPointer(
-                oldForOp, i, newForOp.getResult(indexMap[i]), pointerArgs, rewriter);
-            newResults.push_back(ptrResult);
-        } else {
-            newResults.push_back(newForOp.getResult(indexMap[i]));
-        }
-    }
-    
-    for (auto v : newResults) {
-        if (!v) {
-            return failure();
-        }
-    }
-    rewriter.replaceOp(oldForOp, newResults);
-    return success();
-}
+    DenseMap<unsigned, unsigned> &indexMap, PatternRewriter &rewriter) const {
+  SmallVector<Value> newResults;
 
-Value PromotePointerIterArgsPattern::reconstructPointer(scf::ForOp forOp,
-                                                        unsigned idx,
-                                                        Value intResult,
-                                                        ArrayRef<PointerArgInfo> pointerArgs,
-                                                        PatternRewriter &rewriter) const {
-    const PointerArgInfo *info = nullptr;
-    for (auto &argInfo : pointerArgs) {
-        if (argInfo.oldIndex == idx) {
-            info = &argInfo;
-            break;
-        }
-    }
-    if (!info) return nullptr;
-
-    // Create splat operation to broadcast integer result to tensor shape
-    auto baseType = info->basePointer.getType();
-    Value splatOffset = nullptr;
-    if (auto rankedType = dyn_cast<RankedTensorType>(baseType)) {
-        // Get the shape of the original tensor
-        auto shape = rankedType.getShape();
-        
-        splatOffset = rewriter.create<triton::SplatOp>(
-            forOp.getLoc(),
-            RankedTensorType::get(shape, rewriter.getI32Type()),
-            intResult);
+  for (unsigned i = 0; i < oldForOp.getNumResults(); ++i) {
+    if (isPointerArgIndex(pointerArgs, i)) {
+      Value ptrResult = reconstructPointer(
+          oldForOp, i, newForOp.getResult(indexMap[i]), pointerArgs, rewriter);
+      newResults.push_back(ptrResult);
     } else {
-        return nullptr;
+      newResults.push_back(newForOp.getResult(indexMap[i]));
     }
+  }
 
-    // Create a tensor with the same shape, where all elements are the integer result
-    return rewriter.create<triton::AddPtrOp>(
-        forOp.getLoc(),
-        info->basePointer.getType(),
-        info->basePointer,
-        splatOffset);
+  for (auto v : newResults) {
+    if (!v) {
+      return failure();
+    }
+  }
+  rewriter.replaceOp(oldForOp, newResults);
+  return success();
 }
+
+Value PromotePointerIterArgsPattern::reconstructPointer(
+    scf::ForOp forOp, unsigned idx, Value intResult,
+    ArrayRef<PointerArgInfo> pointerArgs, PatternRewriter &rewriter) const {
+  const PointerArgInfo *info = nullptr;
+  for (auto &argInfo : pointerArgs) {
+    if (argInfo.oldIndex == idx) {
+      info = &argInfo;
+      break;
+    }
+  }
+  if (!info)
+    return nullptr;
+
+  // Create splat operation to broadcast integer result to tensor shape
+  auto baseType = info->basePointer.getType();
+  Value splatOffset = nullptr;
+  if (auto rankedType = dyn_cast<RankedTensorType>(baseType)) {
+    // Get the shape of the original tensor
+    auto shape = rankedType.getShape();
+
+    splatOffset = rewriter.create<triton::SplatOp>(
+        forOp.getLoc(), RankedTensorType::get(shape, rewriter.getI32Type()),
+        intResult);
+  } else {
+    return nullptr;
+  }
+
+  // Create a tensor with the same shape, where all elements are the integer
+  // result
+  return rewriter.create<triton::AddPtrOp>(forOp.getLoc(),
+                                           info->basePointer.getType(),
+                                           info->basePointer, splatOffset);
 }
+} // namespace CannonicalizerConverter

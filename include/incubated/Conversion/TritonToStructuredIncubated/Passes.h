@@ -32,7 +32,6 @@ namespace triton {
 // #include "ascend/include/TritonToStructuredIncubated/Passes.h.inc"
 #include "incubated/Conversion/TritonToStructuredIncubated/Passes.h.inc"
 
-
 } // namespace triton
 } // namespace mlir
 

@@ -144,13 +144,14 @@ public:
 
     // Compute the target materialization, given a value with the pointer type,
     // convert that value to a tuple type.
-    converter.addTargetMaterialization(
-        [](OpBuilder &builder, TypeRange resultTypes, ValueRange inputs,
-           Location loc) -> SmallVector<Value> {
-          return builder
-              .create<UnrealizedConversionCastOp>(loc, resultTypes, inputs.front())
-              ->getResults();
-        });
+    converter.addTargetMaterialization([](OpBuilder &builder,
+                                          TypeRange resultTypes,
+                                          ValueRange inputs,
+                                          Location loc) -> SmallVector<Value> {
+      return builder
+          .create<UnrealizedConversionCastOp>(loc, resultTypes, inputs.front())
+          ->getResults();
+    });
 
     scf::populateSCFStructuralOneToNTypeConversions(converter, patterns);
 
@@ -208,8 +209,8 @@ public:
     // At the end of pointer analysis, we will use the PtrState to create the
     // correct offsets, strides, and remove these ops.
     converter.addTargetMaterialization([](OpBuilder &builder,
-                                          TypeRange resultTypes, ValueRange inputs,
-                                          Location loc) {
+                                          TypeRange resultTypes,
+                                          ValueRange inputs, Location loc) {
       auto placeholder = builder.create<tts::GetStructuredStateOp>(
           loc, inputs.front().getDefiningOp()->getOperand(0));
       assert(llvm::equal(placeholder.getResultTypes(), resultTypes));
