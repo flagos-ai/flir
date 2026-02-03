@@ -21,10 +21,11 @@
 // #include "Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 #include "incubated/Dialect/TritonStructuredIncubated/IR/TritonStructuredDialectIncubated.h"
 using namespace mlir;
-using namespace mlir::tts;
+using namespace mlir::tts::Incubated;
 
 namespace mlir {
 namespace tts {
+namespace Incubated {
 
 LogicalResult GetStructuredStateOp::verify() {
   auto expectedOffsetAndStrideTypes =
@@ -107,5 +108,6 @@ GetStructuredStateOp::getOffsetAndStrideSegmentSizes(Type type) {
   return std::make_pair(offsetSegmentSize, strideSegmentSize);
 }
 
+} //namespace Incubated
 } // namespace tts
 } // namespace mlir
