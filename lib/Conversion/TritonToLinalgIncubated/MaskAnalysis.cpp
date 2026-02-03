@@ -43,11 +43,11 @@ namespace mlir {
 
 namespace triton {
 
-namespace Incubated{
+namespace Incubated {
 
 template <typename MemAccOpTy>
-std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op, OpBuilder &builder)
-{
+std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op,
+                                                        OpBuilder &builder) {
   auto mask = op.getMask();
   if (!mask) {
     return std::nullopt;
@@ -260,7 +260,8 @@ LogicalResult MaskState::parseConstant(arith::ConstantOp constOp,
     assert(attr.isSplat() && isa<IntegerType>(elementType) &&
            "All elements must share a single integer constant value");
 
-    if (elementType.isInteger(1) && isa<ShapedType>(constOp.getValue().getType())) {
+    if (elementType.isInteger(1) &&
+        isa<ShapedType>(constOp.getValue().getType())) {
       auto shapedType = cast<ShapedType>(constOp.getValue().getType());
       auto shape = shapedType.getShape();
       for (size_t i = 0; i < shape.size(); i++) {
@@ -645,9 +646,8 @@ void MaskState::eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter) {
   }
 }
 
-
-std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder)
-{
+std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op,
+                                                    OpBuilder &builder) {
   if (auto loadOp = dyn_cast<triton::LoadOp>(op)) {
     return runMaskAnalysisImpl(loadOp, builder);
   }

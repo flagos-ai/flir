@@ -31,7 +31,6 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "mlir/Conversion/GPUToROCDL/Runtimes.h"
 #include "mlir/Conversion/MathToEmitC/MathToEmitC.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
@@ -41,6 +40,7 @@
 #include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
 #include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "mlir/IR/Builders.h"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
@@ -99,11 +99,10 @@ public:
 
   LogicalResult
   matchAndRewrite(hivm::CustomOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override
-  {
+                  ConversionPatternRewriter &rewriter) const override {
     auto res_types = adaptor.getOutputs().getTypes();
     auto new_op = rewriter.create<hivm::CustomOp>(
-      op->getLoc(), res_types, adaptor.getOperands(), op->getAttrs());
+        op->getLoc(), res_types, adaptor.getOperands(), op->getAttrs());
     rewriter.replaceOp(op, new_op);
     return success();
   }
@@ -534,13 +533,13 @@ void TritonToLinalgIncubatedPass::convertTTFunc(triton::FuncOp func,
 
 void TritonToLinalgIncubatedPass::addDynamicLegal(
     ConversionTarget &target, TritonTypeConverter &tritonTypeConverter) {
-  target.addLegalDialect<
-      func::FuncDialect, arith::ArithDialect, math::MathDialect,
-      linalg::LinalgDialect, affine::AffineDialect, scf::SCFDialect,
-      cf::ControlFlowDialect, tensor::TensorDialect, LLVM::LLVMDialect,
-      bufferization::BufferizationDialect, memref::MemRefDialect,
-      annotation::AnnotationDialect, hivm::HIVMDialect,
-      hfusion::HFusionDialect>();
+  target.addLegalDialect<func::FuncDialect, arith::ArithDialect,
+                         math::MathDialect, linalg::LinalgDialect,
+                         affine::AffineDialect, scf::SCFDialect,
+                         cf::ControlFlowDialect, tensor::TensorDialect,
+                         LLVM::LLVMDialect, bufferization::BufferizationDialect,
+                         memref::MemRefDialect, annotation::AnnotationDialect,
+                         hivm::HIVMDialect, hfusion::HFusionDialect>();
 
   // add legal dialect on condition
   target.addLegalOp<ModuleOp>();
@@ -709,7 +708,8 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
       patterns.getContext());
   patterns.add<LoadStoreConverter::LoadConverter>(patterns.getContext());
   if (compileOn91095Flag && existDotFlag) {
-    patterns.add<LoadStoreConverter::AtomicRMWNewConverter>(patterns.getContext());
+    patterns.add<LoadStoreConverter::AtomicRMWNewConverter>(
+        patterns.getContext());
   } else {
     patterns.add<LoadStoreConverter::AtomicRMWConverter>(patterns.getContext());
   }
@@ -772,8 +772,8 @@ void TritonToLinalgIncubatedPass::getDependentDialects(
   registry.insert<func::FuncDialect, arith::ArithDialect, math::MathDialect,
                   linalg::LinalgDialect, affine::AffineDialect, scf::SCFDialect,
                   tensor::TensorDialect, bufferization::BufferizationDialect,
-                  memref::MemRefDialect, hfusion::HFusionDialect, hivm::HIVMDialect,
-                  annotation::AnnotationDialect>();
+                  memref::MemRefDialect, hfusion::HFusionDialect,
+                  hivm::HIVMDialect, annotation::AnnotationDialect>();
 }
 
 LogicalResult
@@ -832,7 +832,8 @@ TritonToLinalgIncubatedPass::processPtrBroadcastOperations(ModuleOp moduleOp) {
     }
     auto resultType = dyn_cast<RankedTensorType>(op.getType());
     HoistBroadcast::BroadcastHoister hoister(op);
-    return !(isa<triton::PointerType>(resultType.getElementType()) && hoister.canBroadcast());
+    return !(isa<triton::PointerType>(resultType.getElementType()) &&
+             hoister.canBroadcast());
   });
 
   // --- Patterns ---
@@ -853,10 +854,12 @@ void TritonToLinalgIncubatedPass::annotateTensorKindForModule(
     // INPUT tensors
     this->walkAndMarkTensorKind<
         TensorKind::INPUT, triton::LoadOp, triton::IndexSelectSimdOp,
-        triton::EmbeddingGatherOp, triton::GatherOutToUbOp, triton::IndirectLoadOp>(func);
+        triton::EmbeddingGatherOp, triton::GatherOutToUbOp,
+        triton::IndirectLoadOp>(func);
     // OUTPUT tensors
-    this->walkAndMarkTensorKind<TensorKind::OUTPUT, triton::StoreOp, triton::IndexPutOp,
-                                triton::ScatterUbToOutOp, triton::IndirectStoreOp>(func);
+    this->walkAndMarkTensorKind<TensorKind::OUTPUT, triton::StoreOp,
+                                triton::IndexPutOp, triton::ScatterUbToOutOp,
+                                triton::IndirectStoreOp>(func);
     // INPUT_OUTPUT tensors
     this->walkAndMarkTensorKind<TensorKind::INPUT_OUTPUT, triton::AtomicRMWOp,
                                 triton::AtomicCASOp>(func);

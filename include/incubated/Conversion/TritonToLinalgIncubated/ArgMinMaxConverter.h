@@ -225,7 +225,7 @@ public:
         auto pred = cmpOp.getPredicate();
         if (pred == arith::CmpIPredicate::ugt ||
             pred == arith::CmpIPredicate::ult) {
-            isUnsigned = true;
+          isUnsigned = true;
         }
         if (pred == arith::CmpIPredicate::eq ||
             pred == arith::CmpIPredicate::ne) {
@@ -259,11 +259,13 @@ public:
     }
 
     auto reduceWithIndexParams = getReduceWithIndexParams(op);
-    auto valuesAccBaseVal = rewriter.create<arith::ConstantOp>(loc, valueType, valueAttr);
+    auto valuesAccBaseVal =
+        rewriter.create<arith::ConstantOp>(loc, valueType, valueAttr);
     int indicesInitValue =
-        (reduceWithIndexParams.has_value() && (*reduceWithIndexParams).tieBreakType == TieBreakType::RIGHT)
-        ? -1
-        : std::numeric_limits<int32_t>::max();
+        (reduceWithIndexParams.has_value() &&
+         (*reduceWithIndexParams).tieBreakType == TieBreakType::RIGHT)
+            ? -1
+            : std::numeric_limits<int32_t>::max();
 
     auto indexType = elemTypes[1];
     auto indicesAccBaseVal = rewriter.create<arith::ConstantOp>(
@@ -305,7 +307,7 @@ public:
     // so addReduceWithIndexAttrIfNeeded won't fail
     // but ignoring it will lead to compiling failure
     if (reduceWithIndexParams.has_value()) {
-        addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
+      addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
     }
 
     if (isScalarReduce) {

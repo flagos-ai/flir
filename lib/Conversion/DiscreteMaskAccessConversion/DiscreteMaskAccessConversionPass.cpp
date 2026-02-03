@@ -120,7 +120,8 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
   }
 };
 
-struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp> {
+struct DiscreteMaskAtomicConversion
+    : OpRewritePattern<mlir::triton::AtomicRMWOp> {
   using OpRewritePattern<mlir::triton::AtomicRMWOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(mlir::triton::AtomicRMWOp op,

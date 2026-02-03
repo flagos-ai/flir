@@ -42,8 +42,8 @@ extern bool forceSimtTemplateFlag;
 namespace mlir {
 namespace triton {
 
-std::unique_ptr<OperationPass<ModuleOp>>
-createTritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options = {});
+std::unique_ptr<OperationPass<ModuleOp>> createTritonToUnstructureIncubatedPass(
+    const TritonToUnstructureIncubatedOptions &options = {});
 
 } // namespace triton
 } // namespace mlir
@@ -98,7 +98,8 @@ public:
                                 PatternRewriter &rewriter) const override;
 
 private:
-  bool checkUnstructureAnnotated(MemAccOpTy op, PatternRewriter &rewriter) const;
+  bool checkUnstructureAnnotated(MemAccOpTy op,
+                                 PatternRewriter &rewriter) const;
   Value createExtractOp(Location loc, Value value, PatternRewriter &rewriter,
                         ArrayRef<OpFoldResult> iterIdx) const;
   Value createExtractOp(Location loc, Value value, PatternRewriter &rewriter,
@@ -121,9 +122,11 @@ private:
 };
 
 class TritonToUnstructureIncubatedPass
-    : public ::impl::TritonToUnstructureIncubatedBase<TritonToUnstructureIncubatedPass> {
+    : public ::impl::TritonToUnstructureIncubatedBase<
+          TritonToUnstructureIncubatedPass> {
 public:
-  explicit TritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options);
+  explicit TritonToUnstructureIncubatedPass(
+      const TritonToUnstructureIncubatedOptions &options);
   void getDependentDialects(DialectRegistry &registry) const override;
 
   void runOnOperation() override;

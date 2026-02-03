@@ -321,7 +321,8 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     auto fullMemRefShape =
         cast<RankedTensorType>(loopOp.getInitArgs()[0].getType()).getShape();
     auto fullMemRefType = MemRefType::get(fullMemRefShape, memRefElementType);
-    bool isIndexSelectScenario = (extractedLoopCount == 1) && (fullMemRefShape.size() > 1u);
+    bool isIndexSelectScenario =
+        (extractedLoopCount == 1) && (fullMemRefShape.size() > 1u);
     if (isIndexSelectScenario)
       loopOp->setAttr("hivm.parallel_loop", rewriter.getUnitAttr());
     allocOp = rewriter.create<memref::AllocOp>(loc, fullMemRefType);
@@ -383,13 +384,16 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     auto dstSubview = mlir::ConverterUtils::makeSubViewOp(
         allocOp, boundarySizes, loc, rewriter);
     rewriter.create<memref::CopyOp>(loc, srcSubView, dstSubview);
-    if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::AllocOp>()) {
+    if (mayImplicitTransposeWithLastAxis &&
+        allocOp.getDefiningOp<memref::AllocOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, dstSubview);
       markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
                       UnitAttr::get(rewriter.getContext()));
-    } else if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::SubViewOp>()) {
-        auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOpTmp);
-        markOp->setAttr(MayImplicitTransposeWithLastAxisTAG, UnitAttr::get(rewriter.getContext()));
+    } else if (mayImplicitTransposeWithLastAxis &&
+               allocOp.getDefiningOp<memref::SubViewOp>()) {
+      auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOpTmp);
+      markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
+                      UnitAttr::get(rewriter.getContext()));
     }
     return this->toTensorAndReplace(op, tensorType, allocOp,
                                     mayImplicitTransposeWithLastAxis, loc,
@@ -490,13 +494,16 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     auto castOp = rewriter.create<memref::CastOp>(loc, castType, dstSubView);
     rewriter.create<memref::CopyOp>(loc, srcSubView, castOp);
 
-    if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::AllocOp>()) {
+    if (mayImplicitTransposeWithLastAxis &&
+        allocOp.getDefiningOp<memref::AllocOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOp);
       markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
                       UnitAttr::get(rewriter.getContext()));
-    } else if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::SubViewOp>()) {
+    } else if (mayImplicitTransposeWithLastAxis &&
+               allocOp.getDefiningOp<memref::SubViewOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOpTmp);
-      markOp->setAttr(MayImplicitTransposeWithLastAxisTAG, UnitAttr::get(rewriter.getContext()));
+      markOp->setAttr(MayImplicitTransposeWithLastAxisTAG,
+                      UnitAttr::get(rewriter.getContext()));
     }
   }
   return this->toTensorAndReplace(
@@ -722,9 +729,9 @@ AtomicRMWNewConverter::AtomicRMWNewConverter(MLIRContext *context)
 //      %25 = arith.addf %in, %in_9 : f32
 //      linalg.yield %25 : f32
 //    }
-LogicalResult
-AtomicRMWNewConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
-                                    ConversionPatternRewriter &rewriter) const {
+LogicalResult AtomicRMWNewConverter::matchAndRewrite(
+    triton::AtomicRMWOp op, OpAdaptor adaptor,
+    ConversionPatternRewriter &rewriter) const {
   auto ptr = adaptor.getPtr();
   auto val = op.getVal();
   auto loc = op.getLoc();
@@ -813,25 +820,26 @@ AtomicRMWNewConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor
 
   if (isDiscreteMask) {
     if (rmwOp != RMWOp::XCHG) {
-      return op.emitError("Discrete mask is only expected for XCHG; other atomics "
-                   "should be lowered without discrete masks");
+      return op.emitError(
+          "Discrete mask is only expected for XCHG; other atomics "
+          "should be lowered without discrete masks");
     }
     Value memrefMask = mask;
     if (auto maskTypeT = dyn_cast<TensorType>(mask.getType())) {
-    MemRefType maskTypeM = MemRefType::get(maskTypeT.getShape(), maskTypeT.getElementType());
-    memrefMask =
-        rewriter.create<bufferization::ToMemrefOp>(loc, maskTypeM, mask);
+      MemRefType maskTypeM =
+          MemRefType::get(maskTypeT.getShape(), maskTypeT.getElementType());
+      memrefMask =
+          rewriter.create<bufferization::ToMemrefOp>(loc, maskTypeM, mask);
     }
-    rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(), TypeRange(),
-                                           getInputMemref(), dstMemref,
-                                           memrefMask);
+    rewriter.create<hfusion::AtomicXchgOp>(
+        op.getLoc(), TypeRange(), getInputMemref(), dstMemref, memrefMask);
   } else {
     if (rmwOp == RMWOp::XCHG)
-      rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(),
-        TypeRange(), getInputMemref(), dstMemref);
+      rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(), TypeRange(),
+                                             getInputMemref(), dstMemref);
     else
-      rewriter.create<hivm::StoreOp>(op.getLoc(), TypeRange{},
-                                     inputVal, dstMemref, atomicKind);
+      rewriter.create<hivm::StoreOp>(op.getLoc(), TypeRange{}, inputVal,
+                                     dstMemref, atomicKind);
   }
 
   if (op.getResult().use_empty()) {
@@ -1223,7 +1231,8 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
     auto valType = dyn_cast<RankedTensorType>(val.getType());
     if (valType) {
       auto valShape = valType.getShape();
-      bool isIndexPutScenario = (extractedLoopCount == 1) && (valShape.size() > 1u);
+      bool isIndexPutScenario =
+          (extractedLoopCount == 1) && (valShape.size() > 1u);
       if (isIndexPutScenario) {
         auto loopOp = cast<scf::ForOp>(loop);
         loopOp->setAttr("hivm.parallel_loop", rewriter.getUnitAttr());

@@ -23,7 +23,7 @@
 #pragma once
 
 #include "mlir/Pass/Pass.h"
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/IR/PatternMatch.h"
 
@@ -92,14 +92,14 @@ private:
                          PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, triton::MakeRangeOp parentOp,
                          Location loc, PatternRewriter &rewriter) const;
-  void bubbleUpOperation(ExtractOpTy op, triton::AddPtrOp parentOp, Location loc,
-                         PatternRewriter &rewriter) const;
+  void bubbleUpOperation(ExtractOpTy op, triton::AddPtrOp parentOp,
+                         Location loc, PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, math::FloorOp parentOp, Location loc,
                          PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, math::CeilOp parentOp, Location loc,
                          PatternRewriter &rewriter) const;
-  void bubbleUpOperation(ExtractOpTy op, tensor::ExtractSliceOp parentOp, Location loc,
-                         PatternRewriter &rewriter) const;
+  void bubbleUpOperation(ExtractOpTy op, tensor::ExtractSliceOp parentOp,
+                         Location loc, PatternRewriter &rewriter) const;
 
   bool enableAggressiveMode;
 };

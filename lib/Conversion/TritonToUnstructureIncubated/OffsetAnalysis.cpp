@@ -356,9 +356,8 @@ void parseTritonOp(Operation *tritonOp, const Location &loc,
   // else if (auto makeTensorDescOp =
   //                dyn_cast<triton::MakeTensorDescOp>(tritonOp)) {
   //   parseMakeTensorDesc(makeTensorDescOp, loc, rewriter, offsetMap);
-  // } 
-  else if (auto makeTensorPtrOp =
-                 dyn_cast<triton::MakeTensorPtrOp>(tritonOp)) {
+  // }
+  else if (auto makeTensorPtrOp = dyn_cast<triton::MakeTensorPtrOp>(tritonOp)) {
     parseMakeTensorPtr(makeTensorPtrOp, loc, rewriter, offsetMap);
   } else if (auto reduceOp = dyn_cast<triton::ReduceOp>(tritonOp)) {
     parseReduce(reduceOp, loc, rewriter, offsetMap);
