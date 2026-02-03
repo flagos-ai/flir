@@ -3,7 +3,7 @@
 // #include "Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 
 using namespace mlir;
-using namespace mlir::tts;
+using namespace mlir::tts::Incubated;
 
 /// Dialect creation, the instance will be owned by the context. This is the
 /// point of registration of custom types and operations for the dialect.

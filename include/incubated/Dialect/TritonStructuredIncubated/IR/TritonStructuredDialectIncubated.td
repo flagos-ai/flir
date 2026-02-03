@@ -13,7 +13,7 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 def Triton_Structured_Dialect_Incubated : Dialect {
   let name = "tts";
 
-  let cppNamespace = "::mlir::tts";
+  let cppNamespace = "::mlir::tts::Incubated";
 
   let summary = "Structured Triton operations";
 
