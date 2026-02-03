@@ -23,15 +23,15 @@
 #pragma once
 
 #include "mlir/Pass/Pass.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #include "mlir/IR/PatternMatch.h"
 
 #define GEN_PASS_DECL_BUBBLEUPOPERATION
-#include "incubated/Conversion/BubbleUpOperation/Passes.h.inc"
+#include "flir/include/incubated/Conversion/TritonToUnstructureIncubated/Passes.h.inc"
 
 #define GEN_PASS_DEF_BUBBLEUPOPERATION
-#include "incubated/Conversion/BubbleUpOperation/Passes.h.inc"
+#include "flir/include/incubated/Conversion/TritonToUnstructureIncubated/Passes.h.inc"
 
 namespace mlir {
 namespace triton {
