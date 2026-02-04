@@ -40,10 +40,14 @@ namespace mlir {
 namespace triton {
 namespace Incubated {
 
-std::unique_ptr<OperationPass<ModuleOp>> createTritonToLinalgIncubatedPass(
-    bool globalKernel, bool namedOps, bool enableNd2NzOnVector,
-    bool enableSelectAnalysis, bool compileOn91095);
+std::unique_ptr<OperationPass<ModuleOp>> createTritonToLinalgIncubatedPass();
 
+std::unique_ptr<OperationPass<ModuleOp>>
+createTritonToLinalgIncubatedPass(bool, bool, bool, bool, bool);
+
+} // namespace Incubated
+} // namespace triton
+} // namespace mlir
 enum TensorKind { NONE = -1, INPUT = 0, OUTPUT = 1, INPUT_OUTPUT = 2 };
 
 using namespace mlir;
@@ -67,11 +71,6 @@ class TritonToLinalgIncubatedPass
       LAUNCH_GRID_RANK * 2;
 
 private:
-  bool globalKernel;
-  bool namedOps;
-  bool enableNd2NzOnVector;
-  bool enableSelectAnalysis;
-  bool compileOn91095;
   // grid构造 num_programs 3维, program_id 3维
   // remember 'xxxOp' is usually a Pointer, so that we can change target memory
   // without giving a reference argument
@@ -108,21 +107,20 @@ private:
   LogicalResult processPtrBroadcastOperations(ModuleOp moduleOp);
 
 public:
-  TritonToLinalgIncubatedPass(bool globalKernel_ = true, bool namedOps_ = false,
-                              bool enableNd2NzOnVector_ = false,
-                              bool enableSelectAnalysis_ = false,
-                              bool compileOn91095_ = false)
-      : globalKernel(globalKernel_), namedOps(namedOps_),
-        enableNd2NzOnVector(enableNd2NzOnVector_),
-        enableSelectAnalysis(enableSelectAnalysis_),
-        compileOn91095(compileOn91095_) {}
+  TritonToLinalgIncubatedPass() = default;
 
+  TritonToLinalgIncubatedPass(bool globalKernel, bool namedOps,
+                              bool enableNd2nzOnVector,
+                              bool enableSelectAnalysis, bool compileOn91095) {
+    this->globalKernel = globalKernel;
+    this->namedOps = namedOps;
+    this->enableNd2nzOnVector = enableNd2nzOnVector;
+    this->enableSelectAnalysis = enableSelectAnalysis;
+    this->compileOn91095 = compileOn91095;
+  };
   void getDependentDialects(DialectRegistry &registry) const override;
 
   void runOnOperation() override;
 };
-} // namespace Incubated
-} // namespace triton
-} // namespace mlir
 
 #endif // TRITON_ADAPTER_CONVERSION_TRITONTOLINALG_H
