@@ -23,14 +23,15 @@
 #ifndef TRITON_TO_ANNOTATION_CONVERSION_PASSES_H
 #define TRITON_TO_ANNOTATION_CONVERSION_PASSES_H
 
-#include "incubated/Conversion/TritonToAnnotation/TritonToAnnotation.h"
 #include "mlir/Pass/Pass.h"
 namespace mlir {
 // Forward declarations.
+class ModuleOp;
 
 namespace triton {
 
 /// Creates a pass to convert Triton dialect to Annotation dialect.
+std::unique_ptr<OperationPass<ModuleOp>> createTritonToAnnotationPass();
 
 #define GEN_PASS_REGISTRATION
 #include "incubated/Conversion/TritonToAnnotation/Passes.h.inc"
