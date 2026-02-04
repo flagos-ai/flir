@@ -33,10 +33,10 @@ using namespace mlir;
 using namespace hfusion;
 
 namespace {
-struct TritonModToHFusionConversion : OpRewritePattern<triton::ModOp> {
-  using OpRewritePattern<triton::ModOp>::OpRewritePattern;
+struct TritonModToHFusionConversion : OpRewritePattern<triton::ascend::ModOp> {
+  using OpRewritePattern<triton::ascend::ModOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(triton::ModOp op,
+  LogicalResult matchAndRewrite(triton::ascend::ModOp op,
                                 PatternRewriter &rewriter) const final {
     auto lhsType = dyn_cast<RankedTensorType>(op.getLhs().getType());
     auto rhsType = dyn_cast<RankedTensorType>(op.getRhs().getType());

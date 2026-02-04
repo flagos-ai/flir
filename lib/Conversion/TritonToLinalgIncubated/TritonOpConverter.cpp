@@ -1796,7 +1796,7 @@ MatmulConverter::matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
 }
 
 LogicalResult
-FlipOpConverter::matchAndRewrite(triton::FlipOp op, OpAdaptor adaptor,
+FlipOpConverter::matchAndRewrite(triton::ascend::FlipOp op, OpAdaptor adaptor,
                                  ConversionPatternRewriter &rewriter) const {
   Value src = adaptor.getSrc();
   auto rankedSrcTy = cast<RankedTensorType>(src.getType());
@@ -1851,7 +1851,7 @@ FlipOpConverter::matchAndRewrite(triton::FlipOp op, OpAdaptor adaptor,
 }
 
 LogicalResult
-SortOpConverter::matchAndRewrite(triton::SortOp op, OpAdaptor adaptor,
+SortOpConverter::matchAndRewrite(triton::ascend::SortOp op, OpAdaptor adaptor,
                                  ConversionPatternRewriter &rewriter) const {
   Value src = adaptor.getSrc();
   auto rankedSrcTy = cast<RankedTensorType>(src.getType());
@@ -2188,7 +2188,7 @@ PtrToIntConverter::matchAndRewrite(triton::PtrToIntOp op, OpAdaptor adaptor,
 }
 
 LogicalResult EmbeddingGatherConverter::matchAndRewrite(
-    triton::EmbeddingGatherOp op, OpAdaptor adaptor,
+    triton::ascend::EmbeddingGatherOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2232,7 +2232,7 @@ LogicalResult EmbeddingGatherConverter::matchAndRewrite(
 }
 
 LogicalResult
-IndexPutConverter::matchAndRewrite(triton::IndexPutOp op, OpAdaptor adaptor,
+IndexPutConverter::matchAndRewrite(triton::ascend::IndexPutOp op, OpAdaptor adaptor,
                                    ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2278,7 +2278,7 @@ IndexPutConverter::matchAndRewrite(triton::IndexPutOp op, OpAdaptor adaptor,
 }
 
 LogicalResult GatherOutToUbConverter::matchAndRewrite(
-    triton::GatherOutToUbOp op, OpAdaptor adaptor,
+    triton::ascend::GatherOutToUbOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2333,7 +2333,7 @@ LogicalResult GatherOutToUbConverter::matchAndRewrite(
 }
 
 LogicalResult ScatterUbToOutConverter::matchAndRewrite(
-    triton::ScatterUbToOutOp op, OpAdaptor adaptor,
+    triton::ascend::ScatterUbToOutOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2381,7 +2381,7 @@ LogicalResult ScatterUbToOutConverter::matchAndRewrite(
 }
 
 LogicalResult IndirectLoadConverter::matchAndRewrite(
-    triton::IndirectLoadOp op, OpAdaptor adaptor,
+    triton::ascend::IndirectLoadOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2425,7 +2425,7 @@ LogicalResult IndirectLoadConverter::matchAndRewrite(
 }
 
 LogicalResult IndirectStoreConverter::matchAndRewrite(
-    triton::IndirectStoreOp op, OpAdaptor adaptor,
+    triton::ascend::IndirectStoreOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
@@ -2464,10 +2464,10 @@ LogicalResult IndirectStoreConverter::matchAndRewrite(
 }
 
 IndexSelectSimdConverter::IndexSelectSimdConverter(MLIRContext *context)
-    : OpConversionPattern<triton::IndexSelectSimdOp>(context) {}
+    : OpConversionPattern<triton::ascend::IndexSelectSimdOp>(context) {}
 
 LogicalResult IndexSelectSimdConverter::matchAndRewrite(
-    triton::IndexSelectSimdOp op, OpAdaptor adaptor,
+    triton::ascend::IndexSelectSimdOp op, OpAdaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 

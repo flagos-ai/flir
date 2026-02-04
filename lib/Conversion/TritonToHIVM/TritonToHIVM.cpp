@@ -103,10 +103,10 @@ struct TritonToHIVMPass
 } // namespace
 
 struct TritonCustomOpToHIVMSyncOpConversion
-    : OpRewritePattern<triton::CustomOp> {
-  using OpRewritePattern<triton::CustomOp>::OpRewritePattern;
+    : OpRewritePattern<triton::ascend::CustomOp> {
+  using OpRewritePattern<triton::ascend::CustomOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(triton::CustomOp op,
+  LogicalResult matchAndRewrite(triton::ascend::CustomOp op,
                                 PatternRewriter &rewriter) const final {
     auto *ctx = op->getContext();
     auto loc = op->getLoc();

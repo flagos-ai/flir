@@ -97,7 +97,7 @@ void triton::UseAnalysis::visitOperation(Operation *op,
           propagateUse(operands[2], UseType::MetaUse);
         }
       })
-      .Case<triton::IndirectStoreOp>([&](auto store) {
+      .Case<triton::ascend::IndirectStoreOp>([&](auto store) {
         propagateUse(operands[0], UseType::MetaUse);
         propagateUse(operands[1], UseType::MetaUse);
         propagateUse(operands[2], UseType::DataUse);
@@ -334,7 +334,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
                 metaUsers.insert(user);
               }
             })
-            .Case<triton::IndirectStoreOp>([&](auto indirectstore) {
+            .Case<triton::ascend::IndirectStoreOp>([&](auto indirectstore) {
               auto src = indirectstore.getSrc();
               auto offset = indirectstore.getOffsets();
               auto mask = indirectstore.getMask();
@@ -425,7 +425,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
     // them marked as MixUse. Then we traceback from the 2nd load to mark defs
     // MixUse.
     if (opIsIndirectLoad(op) || opIsIndirectCalc(op) ||
-        isa<triton::IndirectStoreOp>(op)) {
+        isa<triton::ascend::IndirectStoreOp>(op)) {
       LLVM_DEBUG({
         os << "[UseAnalysis] Found indirect load interface op: " << *op << "\n";
       });
@@ -447,7 +447,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
             // so that they will be replaced instead of be erased without
             // conversion.
             return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
-                    isa<triton::IndirectStoreOp>(curOp)) &&
+                    isa<triton::ascend::IndirectStoreOp>(curOp)) &&
                    !isMetaUse(curOp);
           },
           /*actionFn*/
