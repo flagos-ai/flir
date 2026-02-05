@@ -30,7 +30,9 @@ namespace test {
 void registerTestAliasPass();
 void registerTestAlignmentPass();
 void registerTestAllocationPass();
+#ifdef __NVIDIA__
 void registerTestMembarPass();
+#endif
 } // namespace test
 } // namespace mlir
 
@@ -41,7 +43,9 @@ inline void registerTritonSharedDialects(mlir::DialectRegistry &registry) {
   mlir::test::registerTestAliasPass();
   mlir::test::registerTestAlignmentPass();
   mlir::test::registerTestAllocationPass();
+#ifdef __NVIDIA__
   mlir::test::registerTestMembarPass();
+#endif
   mlir::triton::registerTritonToLinalgPass();
   mlir::triton::registerTritonToLinalgExperimentalPass();
   mlir::triton::registerTritonToStructuredPass();
