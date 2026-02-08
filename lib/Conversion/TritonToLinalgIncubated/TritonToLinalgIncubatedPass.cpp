@@ -767,6 +767,9 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
   patterns.add<TTOpConverters::FlipOpConverter>(patterns.getContext());
   patterns.add<TTOpConverters::GatherConverter>(patterns.getContext());
 
+  // Add convert pattern for CustomOp.
+  patterns.add<CustomOpConverter>(patterns.getContext());
+
   if (!this->namedOps) {
     linalg::populateElementwiseToLinalgConversionPatterns(patterns);
   }
