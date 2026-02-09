@@ -5,9 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-// FLAGTREE
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-// #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
@@ -29,16 +28,16 @@ using namespace mlir::triton::ascend;
 void TritonAscendDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
       >();
 }
 
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.cpp.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.cpp.inc"
 #define GET_ATTRDEF_CLASSES
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
 #define GET_OP_CLASSES
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"

@@ -28,7 +28,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 namespace mlir {
 namespace triton {
