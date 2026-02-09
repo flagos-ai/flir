@@ -51,7 +51,7 @@ public:
       : OpRewritePattern<triton::LoadOp>(context),
         optimizeDynamicOffset(optimizeDynamicOffset),
         compileOn91095(compileOn91095),
-        enableMaskFallbackConversion(enableMaskFallbackConversion) {};
+        enableMaskFallbackConversion(enableMaskFallbackConversion){};
 
   using OpRewritePattern<triton::LoadOp>::OpRewritePattern;
 
@@ -73,7 +73,7 @@ public:
       : OpRewritePattern<triton::StoreOp>(context),
         optimizeDynamicOffset(optimizeDynamicOffset),
         compileOn91095(compileOn91095),
-        enableMaskFallbackConversion(enableMaskFallbackConversion) {};
+        enableMaskFallbackConversion(enableMaskFallbackConversion){};
 
   using OpRewritePattern<triton::StoreOp>::OpRewritePattern;
 

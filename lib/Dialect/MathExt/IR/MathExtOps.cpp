@@ -44,7 +44,8 @@ OpFoldResult mathext::DivRzOp::fold(FoldAdaptor adaptor) {
 
 /// Materialize an integer or floating point constant.
 Operation *mathext::MathExtDialect::materializeConstant(OpBuilder &builder,
-                                                        Attribute value, Type type,
+                                                        Attribute value,
+                                                        Type type,
                                                         Location loc) {
   if (auto poison = dyn_cast<ub::PoisonAttr>(value))
     return builder.create<ub::PoisonOp>(loc, type, poison);

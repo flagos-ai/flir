@@ -2232,7 +2232,8 @@ LogicalResult EmbeddingGatherConverter::matchAndRewrite(
 }
 
 LogicalResult
-IndexPutConverter::matchAndRewrite(triton::ascend::IndexPutOp op, OpAdaptor adaptor,
+IndexPutConverter::matchAndRewrite(triton::ascend::IndexPutOp op,
+                                   OpAdaptor adaptor,
                                    ConversionPatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 

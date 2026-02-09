@@ -605,7 +605,8 @@ public:
 class EmbeddingGatherConverter
     : public OpConversionPattern<triton::ascend::EmbeddingGatherOp> {
 public:
-  using OpConversionPattern<triton::ascend::EmbeddingGatherOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::EmbeddingGatherOp>::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::EmbeddingGatherOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -614,7 +615,8 @@ private:
   static constexpr llvm::StringRef funcNameBase = "triton_embedding_gather";
 };
 
-class IndexPutConverter : public OpConversionPattern<triton::ascend::IndexPutOp> {
+class IndexPutConverter
+    : public OpConversionPattern<triton::ascend::IndexPutOp> {
 public:
   using OpConversionPattern<triton::ascend::IndexPutOp>::OpConversionPattern;
   LogicalResult
@@ -628,7 +630,8 @@ private:
 class GatherOutToUbConverter
     : public OpConversionPattern<triton::ascend::GatherOutToUbOp> {
 public:
-  using OpConversionPattern<triton::ascend::GatherOutToUbOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::GatherOutToUbOp>::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::GatherOutToUbOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -640,7 +643,8 @@ private:
 class ScatterUbToOutConverter
     : public OpConversionPattern<triton::ascend::ScatterUbToOutOp> {
 public:
-  using OpConversionPattern<triton::ascend::ScatterUbToOutOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::ScatterUbToOutOp>::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::ScatterUbToOutOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -652,7 +656,8 @@ private:
 class IndirectLoadConverter
     : public OpConversionPattern<triton::ascend::IndirectLoadOp> {
 public:
-  using OpConversionPattern<triton::ascend::IndirectLoadOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::IndirectLoadOp>::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::IndirectLoadOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -664,7 +669,8 @@ private:
 class IndirectStoreConverter
     : public OpConversionPattern<triton::ascend::IndirectStoreOp> {
 public:
-  using OpConversionPattern<triton::ascend::IndirectStoreOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::IndirectStoreOp>::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::IndirectStoreOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -677,7 +683,8 @@ class IndexSelectSimdConverter
     : public OpConversionPattern<triton::ascend::IndexSelectSimdOp> {
 public:
   explicit IndexSelectSimdConverter(MLIRContext *context);
-  using OpConversionPattern<triton::ascend::IndexSelectSimdOp>::OpConversionPattern;
+  using OpConversionPattern<
+      triton::ascend::IndexSelectSimdOp>::OpConversionPattern;
 
   LogicalResult
   matchAndRewrite(triton::ascend::IndexSelectSimdOp op, OpAdaptor adaptor,

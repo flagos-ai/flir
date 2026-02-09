@@ -113,14 +113,10 @@ static bool isSIMTOp(Operation *op) {
     return custom_op.getCoreType() == hivm::TCoreType::VECTOR &&
            custom_op.getVFMode() == hivm::VFMode::SIMT;
   }
-  return isa<
-      triton::ascend::EmbeddingGatherOp,
-      triton::ascend::IndexPutOp,
-      triton::ascend::GatherOutToUbOp,
-      triton::ascend::ScatterUbToOutOp,
-      triton::ascend::IndirectLoadOp,
-      triton::ascend::IndirectStoreOp
-      >(op);
+  return isa<triton::ascend::EmbeddingGatherOp, triton::ascend::IndexPutOp,
+             triton::ascend::GatherOutToUbOp, triton::ascend::ScatterUbToOutOp,
+             triton::ascend::IndirectLoadOp, triton::ascend::IndirectStoreOp>(
+      op);
 }
 
 template <typename T, typename = void> struct has_getPtr : std::false_type {};
@@ -860,16 +856,15 @@ void TritonToLinalgIncubatedPass::annotateTensorKindForModule(
     ModuleOp moduleOp) {
   moduleOp.walk([&](triton::FuncOp func) {
     // INPUT tensors
-    this->walkAndMarkTensorKind<TensorKind::INPUT, triton::LoadOp,
-                                                   triton::ascend::IndexSelectSimdOp,
-                                                   triton::ascend::EmbeddingGatherOp,
-                                                   triton::ascend::GatherOutToUbOp,
-                                                   triton::ascend::IndirectLoadOp>(func);
+    this->walkAndMarkTensorKind<
+        TensorKind::INPUT, triton::LoadOp, triton::ascend::IndexSelectSimdOp,
+        triton::ascend::EmbeddingGatherOp, triton::ascend::GatherOutToUbOp,
+        triton::ascend::IndirectLoadOp>(func);
     // OUTPUT tensors
-    this->walkAndMarkTensorKind<TensorKind::OUTPUT, triton::StoreOp,
-                                                    triton::ascend::IndexPutOp,
-                                                    triton::ascend::ScatterUbToOutOp,
-                                                    triton::ascend::IndirectStoreOp>(func);
+    this->walkAndMarkTensorKind<
+        TensorKind::OUTPUT, triton::StoreOp, triton::ascend::IndexPutOp,
+        triton::ascend::ScatterUbToOutOp, triton::ascend::IndirectStoreOp>(
+        func);
     // INPUT_OUTPUT tensors
     this->walkAndMarkTensorKind<TensorKind::INPUT_OUTPUT, triton::AtomicRMWOp,
                                 triton::AtomicCASOp>(func);
