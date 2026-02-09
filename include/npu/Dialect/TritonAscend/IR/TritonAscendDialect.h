@@ -18,19 +18,14 @@
 #include "mlir/IR/OpDefinition.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
-// FLAGTREE
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.h.inc"
-// #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h.inc"
+
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h.inc"
 
 #define GET_ATTRDEF_CLASSES
-// FLAGTREE
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.h.inc"
-// #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.h.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.h.inc"
 
 #define GET_OP_CLASSES
-// FLAGTREE
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOps.h.inc"
-//#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOps.h.inc"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendOps.h.inc"
 
 namespace mlir::triton::ascend {
 

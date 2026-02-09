@@ -24,11 +24,8 @@ include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonTypes.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
 
-// FLAGTREE
-include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendOps.td"
-include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendAttrDefs.td"
-//include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.td"
-//include "ascend/include/Dialect/TritonAscend/IR/TritonAscendAttrDefs.td"
+include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.td"
+include "npu/Dialect/TritonAscend/IR/TritonAscendAttrDefs.td"
 
 //===----------------------------------------------------------------------===//
 // TritonAscend op definitions

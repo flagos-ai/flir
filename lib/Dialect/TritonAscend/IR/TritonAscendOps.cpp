@@ -5,9 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-// FLAGTREE
-#include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-// #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "triton/Tools/Sys/GetEnv.hpp"

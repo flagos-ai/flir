@@ -9,9 +9,7 @@
 #ifndef TRITON_ASCEND_ATTRDEFS
 #define TRITON_ASCEND_ATTRDEFS
 
-// FLAGTREE
-include "flir/include/npu/Dialect/TritonAscend/IR/TritonAscendDialect.td"
-//include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.td"
+include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.td"
 
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/EnumAttr.td"
