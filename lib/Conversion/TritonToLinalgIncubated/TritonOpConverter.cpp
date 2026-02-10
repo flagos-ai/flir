@@ -26,8 +26,6 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
-#include "mlir/Dialect/Complex/IR/Complex.h"
-#include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -38,7 +36,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include <utility>
 
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -48,6 +45,9 @@
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/ValueRange.h"
+#if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#endif
 #if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #endif

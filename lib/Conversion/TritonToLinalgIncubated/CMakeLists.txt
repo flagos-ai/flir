@@ -3,15 +3,15 @@ add_triton_library(TritonToLinalgIncubated
         LoadStoreConverter.cpp
         FunctionConverter.cpp
         ArgMinMaxConverter.cpp
-        DescriptorConverter.cpp
         TritonOpConverter.cpp
         HoistBroadcast.cpp
         BlockPtrAnalysis.cpp
         MaskAnalysis.cpp
         UseAnalysis.cpp
+        DescriptorConverter.cpp
 
   DEPENDS
-  TritonToLinalgIncubatedPassIncGen
+  TritonToLinalgIncubatedConversionPassIncGen
 
   LINK_LIBS PUBLIC
   MLIRArithDialect

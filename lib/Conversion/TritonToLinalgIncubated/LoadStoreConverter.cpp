@@ -20,14 +20,8 @@
  * THE SOFTWARE.
  */
 
-#include "mlir/Conversion/GPUToROCDL/Runtimes.h"
-#include "mlir/Conversion/MathToEmitC/MathToEmitC.h"
-#include "mlir/Dialect/Complex/IR/Complex.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
-#include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
-
-#include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/LoadStoreConverter.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"

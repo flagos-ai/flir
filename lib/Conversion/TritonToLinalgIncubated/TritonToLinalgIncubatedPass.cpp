@@ -31,25 +31,21 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
-#include "mlir/Conversion/GPUToROCDL/Runtimes.h"
-#include "mlir/Conversion/MathToEmitC/MathToEmitC.h"
-#include "mlir/Dialect/Complex/IR/Complex.h"
+#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
-#include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
-#include "mlir/IR/Builders.h"
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#endif
 #if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #endif
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 #if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif

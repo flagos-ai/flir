@@ -21,26 +21,27 @@
  */
 
 #include "incubated/Conversion/TritonToStructuredIncubated/TritonToStructuredIncubatedPass.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/CannonicalizerConverter.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/MemOpConverter.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
 
 #include <cassert>
 #include <cstdint>
 #include <optional>
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#endif
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -56,6 +57,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "incubated/Conversion/TritonToStructuredIncubated/CannonicalizerConverter.h"
+#include "incubated/Conversion/TritonToStructuredIncubated/MemOpConverter.h"
+#include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

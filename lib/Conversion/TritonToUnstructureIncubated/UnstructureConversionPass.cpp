@@ -36,8 +36,6 @@
 
 #include "llvm/ADT/STLExtras.h"
 
-#include <optional>
-
 #define DEBUG_TYPE "triton-unstructure-converter"
 
 using namespace mlir;

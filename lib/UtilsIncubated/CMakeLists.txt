@@ -6,7 +6,3 @@ add_triton_library(MLIRTritonNPUUtils
   MLIRIR
   TritonIR
 )
-target_include_directories(MLIRTritonNPUUtils
-  PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../include/triton-shared
-    )
