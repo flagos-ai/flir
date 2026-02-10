@@ -1,5 +1,5 @@
 add_triton_library(TritonToLinalgIncubated
-        TritonToLinalgIncubatedPass.cpp
+        TritonToLinalgIncubatedConversionPass.cpp
         LoadStoreConverter.cpp
         FunctionConverter.cpp
         ArgMinMaxConverter.cpp
