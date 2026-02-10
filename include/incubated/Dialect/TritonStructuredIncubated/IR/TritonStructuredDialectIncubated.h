@@ -19,8 +19,6 @@ using namespace mlir::triton;
 //===----------------------------------------------------------------------===//
 // TritonStructured Operations
 //===----------------------------------------------------------------------===//
-// FLAGTREE
-// #include "Dialect/TritonStructured/IR/TritonStructuredDialect.h.inc"
 #include "incubated/Dialect/TritonStructuredIncubated/IR/TritonStructuredDialectIncubated.h.inc"
 
 // Include the auto-generated header file containing the declarations of the

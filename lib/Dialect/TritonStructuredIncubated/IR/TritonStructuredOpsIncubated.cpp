@@ -17,8 +17,6 @@
 #include <utility>
 
 #define GET_OP_CLASSES
-// FLAGTREE
-// #include "Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 #include "incubated/Dialect/TritonStructuredIncubated/IR/TritonStructuredDialectIncubated.h"
 using namespace mlir;
 using namespace mlir::tts::Incubated;

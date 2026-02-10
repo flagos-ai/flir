@@ -29,7 +29,6 @@ namespace mlir {
 namespace triton {
 
 #define GEN_PASS_REGISTRATION
-// #include "ascend/include/TritonToStructuredIncubated/Passes.h.inc"
 #include "incubated/Conversion/TritonToStructuredIncubated/Passes.h.inc"
 
 } // namespace triton

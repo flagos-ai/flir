@@ -30,7 +30,6 @@ namespace triton {
 namespace Incubated {
 
 #define GEN_PASS_REGISTRATION
-// #include "ascend/triton-adapter/include/TritonToLinalg/Passes.h.inc"
 #include "incubated/Conversion/TritonToLinalgIncubated/Passes.h.inc"
 
 } // namespace Incubated

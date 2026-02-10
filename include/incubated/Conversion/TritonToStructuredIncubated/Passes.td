@@ -1,5 +1,5 @@
-#ifndef TRITON_TO_STRUCTURED_INCUBATED_PASSES
-#define TRITON_TO_STRUCTURED_INCUBATED_PASSES
+#ifndef TRITON_TO_STRUCTURED_PASSES
+#define TRITON_TO_STRUCTURED_PASSES
 
 include "mlir/Pass/PassBase.td"
 
@@ -18,4 +18,4 @@ def TritonToStructuredIncubated
               /*default*/ "false", "compile on 910_95">];
 }
 
-#endif // TRITON_TO_STRUCTURED_INCUBATED_PASSES
+#endif // TRITON_TO_STRUCTURED_PASSES

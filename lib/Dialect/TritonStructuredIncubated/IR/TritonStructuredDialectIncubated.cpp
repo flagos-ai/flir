@@ -1,6 +1,4 @@
-// FLAGTREE
 #include "incubated/Dialect/TritonStructuredIncubated/IR/TritonStructuredDialectIncubated.h"
-// #include "Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 
 using namespace mlir;
 using namespace mlir::tts::Incubated;
