@@ -3,7 +3,7 @@
 
 include "mlir/Pass/PassBase.td"
 
-def TritonToLinalgIncubated : Pass<"triton-to-linalg-Incubated", "mlir::ModuleOp"> {
+def TritonToLinalgIncubated : Pass<"triton-to-linalg-incubated", "mlir::ModuleOp"> {
     let summary = "Convert Triton to Linalg dialect (Incubated)";
     let constructor = "createTritonToLinalgIncubatedPass()";
     let options = [
