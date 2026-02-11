@@ -2656,8 +2656,7 @@ LogicalResult IndexSelectSimdConverter::matchAndRewrite(
 
   // Convert memref to tensor
   auto resultTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, resultTensorType, outputBuffer, /*restrict=*/true,
-      /*writable=*/true);
+      loc, resultTensorType, outputBuffer, true, true);
 
   // Mark as index_select_simd
   resultTensor->setAttr("index_select_simd", rewriter.getUnitAttr());
