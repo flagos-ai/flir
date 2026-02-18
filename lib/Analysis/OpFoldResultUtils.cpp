@@ -15,12 +15,14 @@
 
 namespace mlir {
 
+#ifndef __FLIR_BUILD_INCUBATED__
 std::optional<int64_t> getIntAttr(const OpFoldResult ofr) {
   if (isa<Attribute>(ofr) && isa<IntegerAttr>(cast<Attribute>(ofr)))
     return dyn_cast<IntegerAttr>(cast<Attribute>(ofr)).getInt();
 
   return std::nullopt;
 }
+#endif
 
 bool hasConstZero(const OpFoldResult ofr) {
   auto intAttr = getIntAttr(ofr);
