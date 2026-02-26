@@ -61,7 +61,7 @@ void triton::UseAnalysis::visitOperation(Operation *op,
                                          ArrayRef<const UseInfo *> results) {
 #endif
 
-  if (op->getResults().size() == 1) {
+  if (op->getResults().size() == 1  && !isa<triton::ToBufferOp>(op)) {
     auto resultType = dyn_cast<ShapedType>(op->getResult(0).getType());
     if (resultType && isa<triton::PointerType>(resultType.getElementType())) {
       for (auto opnd : operands) {

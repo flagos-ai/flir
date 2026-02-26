@@ -8,6 +8,7 @@ add_triton_library(TritonToLinalgIncubated
         BlockPtrAnalysis.cpp
         MaskAnalysis.cpp
         UseAnalysis.cpp
+        MathConverter.cpp
         DescriptorConverter.cpp
 
   DEPENDS

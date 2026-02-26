@@ -27,6 +27,7 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/FunctionConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/HoistBroadcast.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/LoadStoreConverter.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/MathConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonOpConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
@@ -698,6 +699,10 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
       patterns, typeConverter);
 
   patterns.add<triton::Incubated::MetaUseEraser>(patterns.getContext());
+  patterns.add<LoadStoreConverter::AllocConverter>(patterns.getContext());
+  patterns.add<LoadStoreConverter::ToTensorConverter>(patterns.getContext());
+  patterns.add<LoadStoreConverter::ToBufferConverter>(patterns.getContext());
+  patterns.add<LoadStoreConverter::CopyConverter>(patterns.getContext());
   patterns.add<LoadStoreConverter::StoreConverter>(patterns.getContext());
   patterns.add<LoadStoreConverter::AddPtrConverter>(patterns.getContext());
   patterns.add<FunctionConverter::GetProgramIDConverter>(patterns.getContext());
@@ -711,6 +716,20 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
     patterns.add<LoadStoreConverter::AtomicRMWConverter>(patterns.getContext());
   }
   patterns.add<LoadStoreConverter::AtomicCASConverter>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSAAddOp, hivm::VAddOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSASubOp, hivm::VSubOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSAMulOp, hivm::VMulOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSADivOp, hivm::VDivOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSAMaxOp, hivm::VMaxOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::BinaryMathConverter<triton::DSAMinOp, hivm::VMinOp
+      >>(patterns.getContext());
+  patterns.add<MathConverter::MatMulConverter<triton::DSADotOp
+      >>(patterns.getContext());
   patterns.add<TTOpConverters::MakeRangeConverter>(patterns.getContext());
   patterns.add<TTOpConverters::SplatConverter>(patterns.getContext());
   patterns.add<TTOpConverters::ClampFConverter>(patterns.getContext());
@@ -880,6 +899,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
     return WalkResult::interrupt();
   });
   moduleOp.walk([&](triton::DotScaledOp dotScaledOp) {
+    existDot = true;
+    return WalkResult::interrupt();
+  });
+  moduleOp.walk([&](triton::DSADotOp dsaDotOp) {
     existDot = true;
     return WalkResult::interrupt();
   });
