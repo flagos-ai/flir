@@ -437,16 +437,16 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
         op, "can not lower uncontinuout masked loads");
   }
 
-  if (op.getOptMask() && mask && other) {
-    auto scalarOther =
-        mlir::ConverterUtils::getScalarValue(other, loc, rewriter);
-    assert(
-        scalarOther &&
-        "other value used in masked load produced by unsupported instruction!");
-    auto loc = allocOp.getLoc();
-    rewriter.create<linalg::FillOp>(loc, ValueRange{scalarOther},ValueRange{allocOp});
-    other = NULL;
-  }
+  /// if (op.getOptMask() && mask && other) {
+  ///   auto scalarOther =
+  ///       mlir::ConverterUtils::getScalarValue(other, loc, rewriter);
+  ///   assert(
+  ///       scalarOther &&
+  ///       "other value used in masked load produced by unsupported instruction!");
+  ///   auto loc = allocOp.getLoc();
+  ///   rewriter.create<linalg::FillOp>(loc, ValueRange{scalarOther},ValueRange{allocOp});
+  ///   other = NULL;
+  /// }
 
   if (other) {
     auto scalarOther =
@@ -1297,9 +1297,9 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
 ///
 ///  AllocConvert
 ///
-AllocConverter::AllocConverter(MLIRContext *context)
-    : OpConversionPattern<triton::DSAAllocOp>(context) {}
-
+/// AllocConverter::AllocConverter(MLIRContext *context)
+///     : OpConversionPattern<triton::DSAAllocOp>(context) {}
+/// 
 hivm::AddressSpace getAddressSpace(StringRef addrSpace) {
   if (addrSpace == "UB")
     return hivm::AddressSpace::UB;
@@ -1326,33 +1326,33 @@ hivm::DataLayout getDataLayout(StringRef dataLayout) {
   return hivm::DataLayout{};
 }
 
-LogicalResult
-AllocConverter::matchAndRewrite(triton::DSAAllocOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
-  auto loc = op.getLoc();
-  auto ptrType = dyn_cast<RankedTensorType>(op.getResult().getType());
-  if (!ptrType) {
-    op.emitError("Unexpected return type!");
-    return failure();
-  }
-
-  auto ptrTy = ptrType.getElementType();
-  auto memRefElementType = cast<triton::PointerType>(ptrTy).getPointeeType();
-  auto memRefShape = ptrType.getShape();
-
-  // create allocOp
-  auto scope = op.getScope();
-  auto memSpaceAttr = hivm::AddressSpaceAttr::get(
-      rewriter.getContext(), getAddressSpace(scope));
-  auto memRefType = MemRefType::Builder(
-      MemRefType::get(memRefShape, memRefElementType));
-  memRefType.setMemorySpace(memSpaceAttr);
-
-  auto allocOp = rewriter.create<memref::AllocOp>(loc, memRefType);
-
-  rewriter.replaceOp(op, allocOp);
-  return success();
-}
+/// LogicalResult
+/// AllocConverter::matchAndRewrite(triton::DSAAllocOp op, OpAdaptor adaptor,
+///                                 ConversionPatternRewriter &rewriter) const {
+///   auto loc = op.getLoc();
+///   auto ptrType = dyn_cast<RankedTensorType>(op.getResult().getType());
+///   if (!ptrType) {
+///     op.emitError("Unexpected return type!");
+///     return failure();
+///   }
+/// 
+///   auto ptrTy = ptrType.getElementType();
+///   auto memRefElementType = cast<triton::PointerType>(ptrTy).getPointeeType();
+///   auto memRefShape = ptrType.getShape();
+/// 
+///   // create allocOp
+///   auto scope = op.getScope();
+///   auto memSpaceAttr = hivm::AddressSpaceAttr::get(
+///       rewriter.getContext(), getAddressSpace(scope));
+///   auto memRefType = MemRefType::Builder(
+///       MemRefType::get(memRefShape, memRefElementType));
+///   memRefType.setMemorySpace(memSpaceAttr);
+/// 
+///   auto allocOp = rewriter.create<memref::AllocOp>(loc, memRefType);
+/// 
+///   rewriter.replaceOp(op, allocOp);
+///   return success();
+/// }
 
 // ==========Copy Converter =========
 
@@ -1418,18 +1418,20 @@ CopyConverter::matchAndRewrite(triton::DSACopyOp op, OpAdaptor adaptor,
     copyOp = rewriter.create<hivm::ND2NZOp>(loc, /*result_tensor=*/TypeRange{},
                   /*src=*/srcSubView, /*dst=*/dstSubView,
                   /*dst_continuous=*/UnitAttr::get(rewriter.getContext()));
-  } else if (srcAddrSpace == hivm::AddressSpace::L0C &&
-             dstAddrSpace == hivm::AddressSpace::GM) {
-    copyOp = rewriter.create<hivm::FixpipeOp>(loc,
-        /*result_tensor=*/TypeRange{}, /*src=*/srcSubView, /*dst=*/dstSubView,
-        /*enable_nz2nd=*/UnitAttr::get(rewriter.getContext())
+  }
+  /// else if (srcAddrSpace == hivm::AddressSpace::L0C &&
+  ///            dstAddrSpace == hivm::AddressSpace::GM) {
+  ///   copyOp = rewriter.create<hivm::FixpipeOp>(loc,
+  ///       /*result_tensor=*/TypeRange{}, /*src=*/srcSubView, /*dst=*/dstSubView,
+  ///       /*enable_nz2nd=*/UnitAttr::get(rewriter.getContext())
 
-        // #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-        /*nullptr,
-        hivm::FixpipeDMAModeAttr::get(rewriter.getContext(), hivm::FixpipeDMAMode::NZ2ND),
-        nullptr, nullptr, nullptr, nullptr, nullptr*/
-      );
-  } else {
+  ///       // #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+  ///       /*nullptr,
+  ///       hivm::FixpipeDMAModeAttr::get(rewriter.getContext(), hivm::FixpipeDMAMode::NZ2ND),
+  ///       nullptr, nullptr, nullptr, nullptr, nullptr*/
+  ///     );
+  /// }
+  else {
     op.emitError("Not implemented!");
     return failure();
   }
@@ -1443,63 +1445,63 @@ CopyConverter::matchAndRewrite(triton::DSACopyOp op, OpAdaptor adaptor,
 ///
 /// ToTensorConvert
 ///
-ToTensorConverter::ToTensorConverter(MLIRContext *context)
-    : OpConversionPattern<triton::ToTensorOp>(context) {}
-
-LogicalResult
-ToTensorConverter::matchAndRewrite(triton::ToTensorOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
-  auto loc = op.getLoc();
-  auto tensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
-  if (!tensorType) {
-    op.emitError("Unexpected return type!");
-    return failure();
-  }
-
-  auto srcMemref = adaptor.getSrc();
-  if (!isa<MemRefType>(srcMemref.getType())) {
-    op.emitError("ToTensor expects a memref");
-    return failure();
-  }
-
-  auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
-        loc, tensorType, srcMemref, /*restrict*/true , /*writable*/true);
-
-  rewriter.replaceOp(op, toTensorOp);
-  return success();
-}
-
-// ==========ToBuffer Converter =========
-
-///
-/// ToBufferConvert
-///
-ToBufferConverter::ToBufferConverter(MLIRContext *context)
-    : OpConversionPattern<triton::ToBufferOp>(context) {}
-
-LogicalResult
-ToBufferConverter::matchAndRewrite(triton::ToBufferOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
-  auto loc = op.getLoc();
-
-  auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
-  if (!resType) {
-    op.emitError("ToBuffer hope to input a tensor");
-    return failure();
-  }
-
-  auto ptrTy = resType.getElementType();
-  auto memRefElementType = cast<triton::PointerType>(ptrTy).getPointeeType();
-  auto memRefShape = resType.getShape();
-  auto memSpaceAttr = hivm::AddressSpaceAttr::get(
-      rewriter.getContext(), getAddressSpace("UB"));
-  MemRefType dstType = MemRefType::get(memRefShape, memRefElementType,
-      /*layout=*/nullptr, /*memory_space=*/memSpaceAttr);
-  auto toMemref = rewriter.create<bufferization::ToMemrefOp>(loc,
-      dstType, adaptor.getSrc());
-
-  rewriter.replaceOp(op, toMemref);
-  return success();
-}
+/// ToTensorConverter::ToTensorConverter(MLIRContext *context)
+///     : OpConversionPattern<triton::ToTensorOp>(context) {}
+/// 
+/// LogicalResult
+/// ToTensorConverter::matchAndRewrite(triton::ToTensorOp op, OpAdaptor adaptor,
+///                                 ConversionPatternRewriter &rewriter) const {
+///   auto loc = op.getLoc();
+///   auto tensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
+///   if (!tensorType) {
+///     op.emitError("Unexpected return type!");
+///     return failure();
+///   }
+/// 
+///   auto srcMemref = adaptor.getSrc();
+///   if (!isa<MemRefType>(srcMemref.getType())) {
+///     op.emitError("ToTensor expects a memref");
+///     return failure();
+///   }
+/// 
+///   auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+///         loc, tensorType, srcMemref, /*restrict*/true , /*writable*/true);
+/// 
+///   rewriter.replaceOp(op, toTensorOp);
+///   return success();
+/// }
+/// 
+/// // ==========ToBuffer Converter =========
+/// 
+/// ///
+/// /// ToBufferConvert
+/// ///
+/// ToBufferConverter::ToBufferConverter(MLIRContext *context)
+///     : OpConversionPattern<triton::ToBufferOp>(context) {}
+/// 
+/// LogicalResult
+/// ToBufferConverter::matchAndRewrite(triton::ToBufferOp op, OpAdaptor adaptor,
+///                                 ConversionPatternRewriter &rewriter) const {
+///   auto loc = op.getLoc();
+/// 
+///   auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
+///   if (!resType) {
+///     op.emitError("ToBuffer hope to input a tensor");
+///     return failure();
+///   }
+/// 
+///   auto ptrTy = resType.getElementType();
+///   auto memRefElementType = cast<triton::PointerType>(ptrTy).getPointeeType();
+///   auto memRefShape = resType.getShape();
+///   auto memSpaceAttr = hivm::AddressSpaceAttr::get(
+///       rewriter.getContext(), getAddressSpace("UB"));
+///   MemRefType dstType = MemRefType::get(memRefShape, memRefElementType,
+///       /*layout=*/nullptr, /*memory_space=*/memSpaceAttr);
+///   auto toMemref = rewriter.create<bufferization::ToMemrefOp>(loc,
+///       dstType, adaptor.getSrc());
+/// 
+///   rewriter.replaceOp(op, toMemref);
+///   return success();
+/// }
 
 } // namespace LoadStoreConverter

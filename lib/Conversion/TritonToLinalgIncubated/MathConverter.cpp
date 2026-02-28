@@ -1,5 +1,5 @@
 // Copyright (c) 2025  XCoreSigma Inc. All rights reserved.
-#include "TritonToLinalg/MathConverter.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/MathConverter.h"
 
 
 namespace MathConverter {
