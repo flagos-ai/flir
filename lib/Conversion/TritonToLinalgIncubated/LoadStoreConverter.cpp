@@ -1436,6 +1436,7 @@ CopyConverter::matchAndRewrite(triton::DSACopyOp op, OpAdaptor adaptor,
     return failure();
   }
 
+  copyOp->setAttrs(op->getAttrs());
   rewriter.replaceOp(op, copyOp);
   return success();
 }

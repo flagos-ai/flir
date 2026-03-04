@@ -447,7 +447,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
             // so that they will be replaced instead of be erased without
             // conversion.
             return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
-                    isa<triton::ascend::IndirectStoreOp>(curOp)) &&
+                    isa<triton::ascend::IndirectStoreOp>(curOp) || isa<triton::DSACopyOp>(curOp)) &&
                    !isMetaUse(curOp);
           },
           /*actionFn*/
