@@ -24,6 +24,7 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "tle/dsa/dialect/include/IR/Dialect.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -447,7 +448,8 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
             // so that they will be replaced instead of be erased without
             // conversion.
             return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
-                    isa<triton::ascend::IndirectStoreOp>(curOp) || isa<triton::DSACopyOp>(curOp)) &&
+                    isa<triton::ascend::IndirectStoreOp>(curOp) ||
+                    isa<triton::tle::DSACopyOp>(curOp)) &&
                    !isMetaUse(curOp);
           },
           /*actionFn*/

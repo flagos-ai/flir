@@ -274,48 +274,5 @@ class AtomicMaxMinCanonicalizer : public OpRewritePattern<triton::AtomicRMWOp> {
                                 PatternRewriter &rewriter) const override;
 };
 
-// for tle
-// TODO[FIXME]: alloc, to_tensor, to_buffer could use the implementation in buffer_ir directly in ascend
-/// class AllocConverter : public OpConversionPattern<triton::DSAAllocOp> {
-/// 
-/// public:
-///   explicit AllocConverter(MLIRContext *context);
-///   using OpConversionPattern<triton::DSAAllocOp>::OpConversionPattern;
-///   LogicalResult
-///   matchAndRewrite(triton::DSAAllocOp op, OpAdaptor adaptor,
-///           ConversionPatternRewriter &rewriter) const override;
-/// };
-
-class CopyConverter : public OpConversionPattern<triton::DSACopyOp> {
-
-public:
-  explicit CopyConverter(MLIRContext *context);
-  using OpConversionPattern<triton::DSACopyOp>::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(triton::DSACopyOp op, OpAdaptor adaptor,
-          ConversionPatternRewriter &rewriter) const override;
-};
-
-/// class ToTensorConverter : public OpConversionPattern<triton::ToTensorOp> {
-/// 
-/// public:
-///   explicit ToTensorConverter(MLIRContext *context);
-///   using OpConversionPattern<triton::ToTensorOp>::OpConversionPattern;
-///   LogicalResult
-///   matchAndRewrite(triton::ToTensorOp op, OpAdaptor adaptor,
-///           ConversionPatternRewriter &rewriter) const override;
-/// };
-/// 
-/// class ToBufferConverter : public OpConversionPattern<triton::ToBufferOp> {
-/// 
-/// public:
-///   explicit ToBufferConverter(MLIRContext *context);
-///   using OpConversionPattern<triton::ToBufferOp>::OpConversionPattern;
-///   LogicalResult
-///   matchAndRewrite(triton::ToBufferOp op, OpAdaptor adaptor,
-///           ConversionPatternRewriter &rewriter) const override;
-/// };
-
-
 } // namespace LoadStoreConverter
 #endif
