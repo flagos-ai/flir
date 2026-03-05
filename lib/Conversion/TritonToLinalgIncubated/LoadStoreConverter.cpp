@@ -35,9 +35,6 @@
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
-#if __has_include("bishengir/Dialect/HIVM/IR/HIVMAttrs.h.inc")
-#include "bishengir/Dialect/HIVM/IR/HIVMAttrs.h.inc"
-#endif
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -436,17 +433,6 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     return rewriter.notifyMatchFailure(
         op, "can not lower uncontinuout masked loads");
   }
-
-  /// if (op.getOptMask() && mask && other) {
-  ///   auto scalarOther =
-  ///       mlir::ConverterUtils::getScalarValue(other, loc, rewriter);
-  ///   assert(
-  ///       scalarOther &&
-  ///       "other value used in masked load produced by unsupported instruction!");
-  ///   auto loc = allocOp.getLoc();
-  ///   rewriter.create<linalg::FillOp>(loc, ValueRange{scalarOther},ValueRange{allocOp});
-  ///   other = NULL;
-  /// }
 
   if (other) {
     auto scalarOther =
