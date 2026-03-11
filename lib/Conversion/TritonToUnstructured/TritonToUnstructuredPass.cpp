@@ -136,6 +136,9 @@
 // approach, we will only sign-extend where necessary.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -151,6 +154,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "triton-shared/Analysis/OpFoldResultUtils.h"
 #include "triton-shared/AnalysisStructured/PtrAnalysis.h"
+#include "triton-shared/Conversion/TritonToUnstructured/AtomicOpsConverter.h"
 #include "triton-shared/Conversion/TritonToUnstructured/TritonToUnstructured.h"
 #include "triton-shared/Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 #include "triton-shared/Utils/Utils.h"
@@ -224,7 +228,8 @@ public:
     registry
         .insert<arith::ArithDialect, math::MathDialect, affine::AffineDialect,
                 scf::SCFDialect, tensor::TensorDialect, triton::TritonDialect,
-                tts::TritonStructuredDialect>();
+                tts::TritonStructuredDialect, memref::MemRefDialect,
+                linalg::LinalgDialect, bufferization::BufferizationDialect>();
   }
 
   struct PtrOffset {
@@ -383,7 +388,8 @@ public:
                   return success();
                 })
                 .Case<triton::LoadOp, triton::StoreOp, triton::MakeTensorPtrOp,
-                      tts::MakeTensorPtrOp>([&](Operation *op) {
+                      tts::MakeTensorPtrOp, triton::AtomicRMWOp,
+                      triton::AtomicCASOp>([&](Operation *op) {
                   // Special case:
                   // We do not want to create "unstructured tensor pointer" into
                   // tts.make_tptr if the base pointer is directly from the
@@ -527,6 +533,32 @@ public:
                 store->erase();
                 return success();
               })
+              .Case<triton::AtomicRMWOp>([&](triton::AtomicRMWOp atomicOp) {
+                // AtomicRMWOp 的 ptr 操作数已经被 processUnstructuredPtrs
+                // 分析过， 我们只需把它的 ptr 替换成 base ptr（偏移量累积到
+                // offset 里）， 然后交给 Phase-2 的 AtomicRMWConverter 处理。
+                //
+                // 策略：用 tts::GatherOp 的 base/offset 拆分方式同理——
+                // 把 atomicRmw 的 ptr 操作数替换成 offsetMap 里的 base ptr，
+                // 并在前面插入 tt.addptr 把 offset 加回去，让 converter
+                // 看到正确的 ptr。
+                auto offsetInfo = offsetMap.at(atomicOp.getPtr());
+                // 用累积的 offset 重建一个 addptr，作为 atomic 的新 ptr。
+                // （converter 会把这个 addptr 的结果再转成 memref）
+                auto newPtr = b.create<triton::AddPtrOp>(
+                    loc, atomicOp.getPtr().getType(), offsetInfo.ptr,
+                    offsetInfo.offset);
+                atomicOp.getPtrMutable().set(newPtr);
+                return success();
+              })
+              .Case<triton::AtomicCASOp>([&](triton::AtomicCASOp casOp) {
+                auto offsetInfo = offsetMap.at(casOp.getPtr());
+                auto newPtr = b.create<triton::AddPtrOp>(
+                    loc, casOp.getPtr().getType(), offsetInfo.ptr,
+                    offsetInfo.offset);
+                casOp.getPtrMutable().set(newPtr);
+                return success();
+              })
               .Case<triton::MakeTensorPtrOp,
                     tts::MakeTensorPtrOp>([&](auto makeTensorPtr) {
                 // For block pointers, the base could come from a sequence of
@@ -606,6 +638,30 @@ public:
     if (failed(runPipeline(pm, getOperation()))) {
       signalPassFailure();
     }
+
+    // ── Step 3: 原子操作转换
+    // 使用 applyPatternsAndFoldGreedily 而非 applyPartialConversion，
+    // 避免框架对 tt.func 签名做合法性检查导致失败。
+    auto moduleOp = getOperation();
+    RewritePatternSet patterns(&getContext());
+    mlir::triton::shared::populateAtomicConversionPatterns(patterns);
+
+    if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
+      moduleOp->emitWarning("AtomicOps rewrite did not converge");
+    }
+
+    // 检查是否还有残留的原子 op
+    bool hasResidual = false;
+    moduleOp.walk([&](triton::AtomicRMWOp op) {
+      op->emitError("tt.atomic_rmw was not lowered");
+      hasResidual = true;
+    });
+    moduleOp.walk([&](triton::AtomicCASOp op) {
+      op->emitError("tt.atomic_cas was not lowered");
+      hasResidual = true;
+    });
+    if (hasResidual)
+      signalPassFailure();
   }
 };
 } // namespace
