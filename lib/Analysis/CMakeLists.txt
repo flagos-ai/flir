@@ -7,6 +7,7 @@ add_triton_library(TritonSharedAnalysis
   DEPENDS
   TritonTableGen
   TritonStructuredTableGen
+  TritonGPUAttrDefsIncGen
 
   LINK_LIBS PUBLIC
   MLIRAnalysis

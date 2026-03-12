@@ -147,10 +147,17 @@ struct ScalarStoreConverter : public OpConversionPattern<tts::ScatterOp> {
         ArrayRef<OpFoldResult>{rewriter.getIndexAttr(1)} /*strides*/);
 
     auto storeVal = scatterOp.getValue();
+
+#ifdef FLAGTREE_BACKEND_TSINGMICRO
+    rewriter.create<memref::StoreOp>(
+        loc, storeVal, memref,
+        ValueRange{rewriter.create<arith::ConstantIndexOp>(loc, 0)});
+#else
     auto zeroMap = AffineMap::getConstantMap(0, rewriter.getContext());
 
     rewriter.create<affine::AffineStoreOp>(loc, storeVal, memref, zeroMap,
                                            std::nullopt);
+#endif
     rewriter.eraseOp(scatterOp);
 
     return success();
@@ -230,6 +237,15 @@ struct GatherConverter : public OpConversionPattern<tts::GatherOp> {
     auto genericOp = rewriter.create<linalg::GenericOp>(
         loc, TypeRange{resultType}, inputs, ValueRange{emptyTensor}, affineMaps,
         iteratorTypes, [&](OpBuilder &b, Location loc, ValueRange args) {
+#ifdef FLAGTREE_BACKEND_TSINGMICRO
+          auto getValueAtIndex = [baseMemref](OpBuilder &b, Location loc,
+                                              Value index) -> Value {
+            Value index0 =
+                b.create<arith::IndexCastOp>(loc, b.getIndexType(), index);
+
+            return b.create<memref::LoadOp>(loc, baseMemref,
+                                            ValueRange{index0});
+#else
           auto getValueAtIndex = [baseTensor](OpBuilder &b, Location loc,
                                               Value index) -> Value {
             Value index0 =
@@ -237,6 +253,7 @@ struct GatherConverter : public OpConversionPattern<tts::GatherOp> {
 
             return b.create<tensor::ExtractOp>(loc, baseTensor,
                                                ValueRange{index0});
+#endif
           };
 
           auto offset = args[0];

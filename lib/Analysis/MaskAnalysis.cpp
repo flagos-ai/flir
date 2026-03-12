@@ -68,6 +68,8 @@ LogicalResult MaskState::parse(Value operand, const Location loc,
     return this->parseLoopIterArg(operand, loc, builder);
   } else if (auto op = operand.getDefiningOp<arith::ExtSIOp>()) {
     return this->parseExtSI(op, loc, builder);
+  } else if (auto op = operand.getDefiningOp<arith::SubIOp>()) {
+    return this->parseSub(op, loc, builder);
   } else if (auto op = operand.getDefiningOp<arith::RemSIOp>()) {
     if (incubatedTag)
       return this->parseRemsi(op, loc, builder);
@@ -222,6 +224,37 @@ LogicalResult MaskState::addStateScalar(const MaskState &state,
   return success();
 }
 
+LogicalResult MaskState::subStateScalar(const MaskState &state,
+                                        const OpFoldResult scalar, Location loc,
+                                        OpBuilder &builder) {
+  start = subOFRs(state.start, scalar, loc, builder);
+  end = subOFRs(state.end, scalar, loc, builder);
+  dims = state.dims;
+  return success();
+}
+
+LogicalResult MaskState::subStates(const MaskState &lhsState,
+                                   const MaskState &rhsState, Location loc,
+                                   OpBuilder &builder) {
+  if (lhsState.scalar && rhsState.scalar) {
+    InFlightDiagnostic diag =
+        emitError(loc) << "Unexpected case where both lhs and rhs are scalars";
+    return failure();
+  }
+
+  if (!lhsState.scalar && !rhsState.scalar) {
+    InFlightDiagnostic diag =
+        emitError(loc)
+        << "Unsupported scenario where neither lhs nor rhs is a scalar";
+    return failure();
+  }
+
+  if (lhsState.scalar)
+    return subStateScalar(rhsState, lhsState.scalar, loc, builder);
+  else
+    return subStateScalar(lhsState, rhsState.scalar, loc, builder);
+}
+
 LogicalResult MaskState::addStates(const MaskState &lhsState,
                                    const MaskState &rhsState, Location loc,
                                    OpBuilder &builder) {
@@ -343,6 +376,21 @@ LogicalResult MaskState::parseAdd(arith::AddIOp addOp, const Location loc,
     return failure();
 
   return this->addStates(lhsState, rhsState, loc, builder);
+}
+
+LogicalResult MaskState::parseSub(arith::SubIOp subOp, const Location loc,
+                                  OpBuilder &builder) {
+  assert(this->isEmpty());
+
+  MaskState lhsState;
+  if (failed(lhsState.parse(subOp.getLhs(), loc, builder)))
+    return failure();
+
+  MaskState rhsState;
+  if (failed(rhsState.parse(subOp.getRhs(), loc, builder)))
+    return failure();
+
+  return this->subStates(lhsState, rhsState, loc, builder);
 }
 
 LogicalResult MaskState::parseAnd(arith::AndIOp andOp, const Location loc,
@@ -491,6 +539,17 @@ LogicalResult MaskState::parseLoopIterArg(Value v, const Location loc,
       return failure();
     }
 
+#ifdef FLAGTREE_BACKEND_TSINGMICRO
+    if (llvm::isa_and_nonnull<arith::ConstantOp>(tritonValue.getDefiningOp())) {
+      // It's accurately a size 1 tl.arange op
+      auto constOp = tritonValue.getDefiningOp<arith::ConstantOp>();
+      if (llvm::succeeded(this->parseConstant(constOp, loc, builder))) {
+        this->dims.push_back(builder.getIndexAttr(1));
+        return success();
+      }
+      return failure();
+    }
+#endif
     // This is a bit of a hack!!
     //
     // The offsets and dimensions of a MaskState can now depend on a loop's

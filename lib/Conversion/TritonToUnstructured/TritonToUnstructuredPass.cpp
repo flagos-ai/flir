@@ -292,7 +292,35 @@ public:
 
         auto res =
             llvm::TypeSwitch<Operation *, LogicalResult>(user)
+                .Case<arith::SelectOp>([&](arith::SelectOp op) {
+                  auto ptr = op->getOperand(0);
 
+                  if (!offsetMap.contains(op.getTrueValue()) ||
+                      !offsetMap.contains(op.getFalseValue()))
+                    return success();
+                  auto TrueValue = offsetMap.at(op.getTrueValue());
+                  auto FalseValue = offsetMap.at(op.getFalseValue());
+                  assert(TrueValue.bitWidth == FalseValue.bitWidth &&
+                         "arith.select op should have the same bitwidth "
+                         "for both true and false values");
+                  auto res = op.getResult();
+                  auto resType = op.getType();
+
+                  OpBuilder b{op};
+                  auto newOffset = b.create<arith::SelectOp>(
+                      op->getLoc(),
+                      getPtrOffsetType(resType, TrueValue.bitWidth),
+                      op.getCondition(), TrueValue.offset, FalseValue.offset);
+                  PtrOffset newOffsetInfo{res, resType, TrueValue.bitWidth,
+                                          newOffset};
+
+                  offsetMap.insert({
+                      res,
+                      newOffsetInfo,
+                  });
+                  workList.push(res);
+                  return success();
+                })
                 .Case<triton::PtrToIntOp>([&](triton::PtrToIntOp op) {
                   auto offsetInfo = offsetMap.at(op.getSrc());
 
@@ -309,6 +337,48 @@ public:
                   // We will need to revisit how we process the IRs in this pass
                   // later.
                   op->setOperand(0, materializedAddPtr);
+
+                  return success();
+                })
+                .Case<triton::BitcastOp>([&](triton::BitcastOp bitcast) {
+                  auto resPtrType = bitcast.getType();
+                  OpBuilder b{bitcast};
+                  auto loc = bitcast->getLoc();
+
+                  auto offsetInfo = offsetMap.at(bitcast.getOperand());
+                  auto srcPtrType = offsetInfo.ptrType;
+                  assert((triton::isPtrTypeLike(resPtrType) &&
+                          triton::isPtrTypeLike(srcPtrType)) &&
+                         "unexpected bitcast type");
+                  Type resType =
+                      isa<RankedTensorType>(resPtrType)
+                          ? cast<RankedTensorType>(resPtrType).getElementType()
+                          : resPtrType;
+                  Type srcType =
+                      isa<RankedTensorType>(srcPtrType)
+                          ? cast<RankedTensorType>(srcPtrType).getElementType()
+                          : srcPtrType;
+                  assert(((cast<triton::PointerType>(srcType)
+                               .getPointeeType()
+                               .isInteger(1) &&
+                           cast<triton::PointerType>(resType)
+                               .getPointeeType()
+                               .isInteger(8)) ||
+                          (cast<triton::PointerType>(srcType)
+                               .getPointeeType()
+                               .isInteger(8) &&
+                           cast<triton::PointerType>(resType)
+                               .getPointeeType()
+                               .isInteger(1))) &&
+                         "only bitcast between i1 and i8 pointer is supported");
+                  auto newBitcast =
+                      b.create<triton::BitcastOp>(loc, resType, offsetInfo.ptr);
+                  bitcast->replaceAllUsesWith(newBitcast);
+                  PtrOffset newOffsetInfo{newBitcast, resPtrType,
+                                          offsetInfo.bitWidth,
+                                          offsetInfo.offset};
+                  offsetMap.insert({newBitcast, newOffsetInfo});
+                  workList.push(newBitcast);
 
                   return success();
                 })
@@ -363,11 +433,11 @@ public:
                   auto offsetInfo = offsetMap.at(ptr);
 
                   OpBuilder b{op};
-                  auto clone =
-                      b.create(op->getLoc(), op->getName().getIdentifier(),
-                               ValueRange{offsetInfo.offset},
-                               TypeRange{getPtrOffsetType(
-                                   resType, offsetInfo.bitWidth)});
+                  auto clone = b.create(
+                      op->getLoc(), op->getName().getIdentifier(),
+                      ValueRange{offsetInfo.offset},
+                      TypeRange{getPtrOffsetType(resType, offsetInfo.bitWidth)},
+                      op->getAttrs());
 
                   PtrOffset newOffsetInfo{offsetInfo.ptr, resType,
                                           offsetInfo.bitWidth,
@@ -392,6 +462,12 @@ public:
                     if (ptrArgs.contains(makeTensorPtr.getBase())) {
                       return success();
                     }
+                    if (auto bitcast = dyn_cast<triton::BitcastOp>(
+                            makeTensorPtr.getBase().getDefiningOp())) {
+                      if (ptrArgs.contains(bitcast.getSrc())) {
+                        return success();
+                      }
+                    }
                   }
 
                   ptrUsers.push_back(op);
@@ -409,6 +485,14 @@ public:
 
                   auto offsetType =
                       getPtrOffsetType(offsetInfo.ptrType, offsetInfo.bitWidth);
+
+
+                  // In order to keep types of the operands consistent, we need
+                  // to replace the base pointer if it is directly from the
+                  // kernel arguments.
+                  if (ptrArgs.contains(init)) {
+                    forOp->setOperand(argIndex, offsetInfo.offset);
+                  }
 
                   // We're setting both the types of the iter-arg and the
                   // corresponding result directly to the offset type.
@@ -443,6 +527,60 @@ public:
 
                   return success();
                 })
+                .Case<scf::WhileOp>([&](scf::WhileOp whileOp) {
+                  auto argIndex = use.getOperandNumber();
+                  auto init = whileOp.getInits()[argIndex];
+                  auto offsetInfo = offsetMap.at(init);
+                  auto offsetType =
+                      getPtrOffsetType(offsetInfo.ptrType, offsetInfo.bitWidth);
+
+                  // In order to keep types of the operands consistent, we need
+                  // to replace the base pointer if it is directly from the
+                  // kernel arguments.
+                  if (ptrArgs.contains(init)) {
+                    whileOp->setOperand(argIndex, offsetInfo.offset);
+                  }
+                  auto beforeArg = whileOp.getBeforeArguments()[argIndex];
+                  beforeArg.setType(offsetType);
+
+                  auto afterArg = whileOp.getAfterArguments()[argIndex];
+                  afterArg.setType(offsetType);
+
+                  auto res = whileOp->getOpResult(argIndex);
+                  res.setType(offsetType);
+
+                  PtrOffset beforeArgOffset{offsetInfo.ptr, offsetInfo.ptrType,
+                                            offsetInfo.bitWidth, beforeArg};
+                  offsetMap.insert({
+                      beforeArg,
+                      beforeArgOffset,
+                  });
+
+                  PtrOffset afterArgOffset{offsetInfo.ptr, offsetInfo.ptrType,
+                                           offsetInfo.bitWidth, afterArg};
+
+                  offsetMap.insert({
+                      afterArg,
+                      afterArgOffset,
+                  });
+
+                  PtrOffset resOffset{offsetInfo.ptr, offsetInfo.ptrType,
+                                      offsetInfo.bitWidth, res};
+                  offsetMap.insert({
+                      res,
+                      resOffset,
+                  });
+                  workList.push(beforeArg);
+                  workList.push(afterArg);
+                  workList.push(res);
+
+                  return success();
+                })
+                .Case<triton::AtomicRMWOp, triton::AtomicCASOp>(
+                    [&](Operation *op) {
+                      ptrUsers.push_back(op);
+                      return success();
+                    })
                 .Case<triton::BitcastOp>([&](triton::BitcastOp bitcast) {
                   for (auto *user : bitcast->getUsers()) {
                     if (isa<tts::MakeTensorPtrOp>(user)) {
@@ -477,7 +615,8 @@ public:
 
                   return success();
                 })
-                .Case<scf::YieldOp>([](auto) { return success(); })
+                .Case<scf::YieldOp, scf::ConditionOp>(
+                    [](auto) { return success(); })
                 .Case<triton::CatOp>([](triton::CatOp op) {
                   op->emitError("Do not support gather / scatter with multiple "
                                 "bases yet");
@@ -570,6 +709,28 @@ public:
 
                 offsetOpnd.set(accumulatedOffset);
 
+                return success();
+              })
+              .Case<triton::AtomicCASOp>([&](triton::AtomicCASOp atomicOp) {
+                auto offsetInfo = offsetMap.at(atomicOp.getPtr());
+                auto casOp = b.create<tts::AtomicCASOp>(
+                    loc, atomicOp.getType(), offsetInfo.ptr, atomicOp.getCmp(),
+                    atomicOp.getVal(), offsetInfo.offset, atomicOp.getSemAttr(),
+                    atomicOp.getScopeAttr());
+                atomicOp->replaceAllUsesWith(casOp->getResults());
+                atomicOp->erase();
+
+                return success();
+              })
+              .Case<triton::AtomicRMWOp>([&](triton::AtomicRMWOp atomicOp) {
+                auto offsetInfo = offsetMap.at(atomicOp.getPtr());
+                auto rmwOp = b.create<tts::IndexedAtomicRMWOp>(
+                    loc, atomicOp.getType(), offsetInfo.ptr, atomicOp.getVal(),
+                    atomicOp.getMask(), offsetInfo.offset,
+                    atomicOp.getAtomicRmwOpAttr(), atomicOp.getSemAttr(),
+                    atomicOp.getScopeAttr());
+                atomicOp->replaceAllUsesWith(rmwOp->getResults());
+                atomicOp->erase();
                 return success();
               })
 

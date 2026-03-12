@@ -65,6 +65,10 @@ struct PtrState {
   LogicalResult addState(const PtrState &lhsState, const PtrState &rhsState,
                          Operation *op, OpBuilder &builder);
 
+  // Process subtraction of two PtrStates
+  LogicalResult subState(const PtrState &lhsState, const PtrState &rhsState,
+                         Operation *op, OpBuilder &builder);
+
   // Process multiplication of two PtrStates
   LogicalResult mulState(const PtrState &lhsState, const PtrState &rhsState,
                          Operation *op, OpBuilder &builder);
@@ -126,6 +130,19 @@ public:
   //  offsets[i] = lhsState.offsets[i] + rhsState.offsets[i]
   //  strides[i] = lhsState.strides[i] + rhsState.strides[i]
   LogicalResult visitOperandAdd(arith::AddIOp addOp, PtrState &state,
+                                const Location loc, OpBuilder &builder);
+
+  // Operand is the result of arith.subi. Process both arguments and insert any
+  // arith.subi instruction as needed.
+  // Main assumptions:
+  //  Only one of lhsState and rhsState has source field set
+  //  Current PtrState should be empty
+  // Expected result:
+  //  source = lhsState.source ? lhsState.source : rhsState.source
+  //  sizes[i] = lhsState.sizes[i] (which should match rhsState.sizes[i])
+  //  offsets[i] = lhsState.offsets[i] - rhsState.offsets[i]
+  //  strides[i] = lhsState.strides[i] - rhsState.strides[i]
+  LogicalResult visitOperandSub(arith::SubIOp subOp, PtrState &state,
                                 const Location loc, OpBuilder &builder);
 
   // Operand is the result of arith.muli. Process both arguments and insert any
@@ -279,6 +296,11 @@ public:
   LogicalResult rewriteLoadOp(triton::LoadOp op, bool useUnsafeMask = false);
 
   LogicalResult rewriteStoreOp(triton::StoreOp op, bool useUnsafeMask = false);
+
+  LogicalResult rewriteAtomicRMWOp(triton::AtomicRMWOp op,
+                                   bool useUnsafeMask = false);
+
+  LogicalResult rewriteAtomicCASOp(triton::AtomicCASOp op);
 
   LogicalResult rewriteOp(Operation *op, bool useUnsafeMask = false);
 };

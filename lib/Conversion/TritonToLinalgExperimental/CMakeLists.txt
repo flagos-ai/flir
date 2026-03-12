@@ -6,7 +6,6 @@
 
 add_triton_library(TritonToLinalgExperimental
   TritonToLinalgExperimentalPass.cpp
-  ReconcilePtrCastsPass.cpp
   TritonToPtrPass.cpp
 
   DEPENDS
@@ -37,4 +36,5 @@ add_triton_library(TritonToLinalgExperimental
   TritonToUnstructured
   TritonPtrToMemref
   UnstructuredToMemref
+  ReconcilePtrCasts
 )

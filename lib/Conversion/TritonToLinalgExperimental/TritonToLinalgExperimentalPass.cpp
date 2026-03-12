@@ -13,7 +13,7 @@
 #include "triton-shared/Conversion/NoBufferize_FlagTree/NoBufferizeFlagTree.h"
 #include "triton-shared/Conversion/TritonArithToLinalg/TritonArithToLinalg.h"
 #include "triton-shared/Conversion/TritonPtrToMemref/TritonPtrToMemref.h"
-#include "triton-shared/Conversion/TritonToLinalgExperimental/ReconcilePtrCasts.h"
+#include "triton-shared/Conversion/ReconcilePtrCasts/ReconcilePtrCasts.h"
 #include "triton-shared/Conversion/TritonToLinalgExperimental/TritonToLinalgExperimental.h"
 #include "triton-shared/Conversion/TritonToLinalgExperimental/TritonToPtr.h"
 #include "triton-shared/Conversion/TritonToStructured/TritonToStructured.h"

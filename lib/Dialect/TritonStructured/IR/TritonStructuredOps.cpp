@@ -168,6 +168,20 @@ void StoreOp::build(OpBuilder &b, OperationState &state, Value ptr, Value value,
   build(b, state, ptr, value, dynamicDims, b.getDenseI64ArrayAttr(staticDims));
 }
 
+void AtomicRMWOp::build(OpBuilder &b, OperationState &state, mlir::Type result,
+                        Value ptr, Value value, ArrayRef<OpFoldResult> dims,
+                        triton::RMWOpAttr atomicRMWOp,
+                        triton::MemSemanticAttr sem,
+                        triton::MemSyncScopeAttr scope) {
+  SmallVector<int64_t> staticDims;
+  SmallVector<Value> dynamicDims;
+
+  dispatchIndexOpFoldResults(dims, dynamicDims, staticDims);
+
+  build(b, state, result, ptr, value, dynamicDims,
+        b.getDenseI64ArrayAttr(staticDims), atomicRMWOp, sem, scope);
+}
+
 LogicalResult GetStructuredStateOp::verify() {
   auto expectedOffsetAndStrideTypes =
       getOffsetAndStrideTypes(getContext(), getInput().getType());
