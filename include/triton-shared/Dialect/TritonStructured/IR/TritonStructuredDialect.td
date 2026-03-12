@@ -24,9 +24,6 @@ def Triton_Structured_Dialect : Dialect {
   let usePropertiesForAttributes = 1;
 }
 
-// FIXME: AnyTensor
-def TT_IndexTensorLike : AnyTypeOf<[I1Tensor, I8Tensor, I16Tensor, I32Tensor, I64Tensor, IndexTensor]>;
-
 //
 // Op Base
 //
