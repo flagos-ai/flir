@@ -15,5 +15,4 @@ add_triton_library(ReconcilePtrCasts
   MLIRSupport
   MLIRReconcileUnrealizedCasts
   TritonIR
-  MLIRAddress
 )
