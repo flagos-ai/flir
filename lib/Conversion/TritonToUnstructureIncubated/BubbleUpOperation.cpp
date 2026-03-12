@@ -23,7 +23,6 @@
 #include "incubated/Conversion/TritonToUnstructureIncubated/BubbleUpOperation.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
@@ -58,30 +57,6 @@ BubbleUpExtract<ExtractOpTy>::matchAndRewrite(ExtractOpTy op,
   auto loc = op.getLoc();
 
   if (!parentOp || (!enableAggressiveMode && !parentOp->hasOneUse())) {
-    return failure();
-  }
-
-  // Don't bubble up operations across loop boundaries.
-  auto getParentLoopDepth = [](Operation *op) -> int {
-    int depth = 0;
-    while (op) {
-      if (dyn_cast<scf::ForOp>(op)) {
-        depth++;
-      }
-      op = op->getParentOp();
-    }
-    return depth;
-  };
-
-  int parentDepth = getParentLoopDepth(parentOp);
-  int extractDepth = getParentLoopDepth(op);
-
-  if (!parentOp->hasOneUse() && parentDepth != extractDepth) {
-    LLVM_DEBUG({
-      llvm::dbgs() << "Preventing bubble up across loop boundary: "
-                   << "parent loop depth=" << parentDepth
-                   << ", extract loop depth=" << extractDepth << "\n";
-    });
     return failure();
   }
 

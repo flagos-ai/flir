@@ -74,8 +74,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
-#include "tle/dsa/dialect/include/Conversion/TleToLinalg/MathConverter.h"
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/DSACopyConverter.h"
+#include "tle/dsa/dialect/include/Conversion/TleToLinalg/MathConverter.h"
 
 #include <cassert>
 #include <cstdint>
@@ -886,10 +886,6 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
     existDot = true;
     return WalkResult::interrupt();
   });
-  /// moduleOp.walk([&](triton::tle::DSADotOp dsaDotOp) {
-  ///   existDot = true;
-  ///   return WalkResult::interrupt();
-  /// });
   existDotFlag = existDot;
 
   bool existSIMTOp = false;
@@ -956,8 +952,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
   this->populateTritonToLinalgConversionPatterns(tritonTypeConverter, patterns,
                                                  LAUNCH_GRID_RANK);
-  triton::tle::populateTleMathOpConversionPatterns(tritonTypeConverter, patterns);
-  triton::tle::populateTleCopyOpConversionPatterns(tritonTypeConverter, patterns);
+  triton::tle::populateTleMathOpConversionPatterns(tritonTypeConverter,
+                                                   patterns);
+  triton::tle::populateTleCopyOpConversionPatterns(tritonTypeConverter,
+                                                   patterns);
 
   // 6. Inject program id / number of programs arguments into each Triton kernel
   // function.

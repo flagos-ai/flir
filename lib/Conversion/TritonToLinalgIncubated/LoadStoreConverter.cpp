@@ -1278,5 +1278,4 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   return success();
 }
 
-
 } // namespace LoadStoreConverter
