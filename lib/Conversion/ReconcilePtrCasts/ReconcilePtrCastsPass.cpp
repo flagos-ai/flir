@@ -14,7 +14,7 @@
 // to_memref or from_memref accordingly.
 //===----------------------------------------------------------------------===//
 
-#include "triton-shared/Conversion/TritonToLinalgExperimental/ReconcilePtrCasts.h"
+#include "triton-shared/Conversion/ReconcilePtrCasts/ReconcilePtrCasts.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Dialect/Ptr/IR/PtrTypes.h"
 #include "mlir/IR/Builders.h"
@@ -35,7 +35,7 @@ using namespace mlir;
 using namespace triton;
 
 #define GEN_PASS_CLASSES
-#include "triton-shared/Conversion/TritonToLinalgExperimental/Passes.h.inc"
+#include "triton-shared/Conversion/ReconcilePtrCasts/Passes.h.inc"
 
 namespace {
 
