@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Ptr/IR/PtrDialect.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "triton-shared/Conversion/StructuredToMemref/Passes.h"
+#include "triton-shared/Conversion/ReconcilePtrCasts/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "triton/Dialect/Triton/Transforms/Passes.h"
