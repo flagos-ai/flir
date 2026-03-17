@@ -265,7 +265,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
     maps.push_back(idMap);
   }
 
-  rewriter.create<linalg::GenericOp>(
+  auto genericOp = rewriter.create<linalg::GenericOp>(
       loc, TypeRange{}, inputs, outputs, maps, iters,
       [&](OpBuilder &b, Location l, ValueRange args) {
         Value ptrElem = args[0];
@@ -279,7 +279,35 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
         b.create<linalg::YieldOp>(l, ValueRange{writeBack, ptrElem});
       });
 
-  // resultBuf → tensor（满足 op result 类型要求）
+  MLIRContext *context = rewriter.getContext();
+  const StringRef genericAtomicRMW = "GenericAtomicRMW";
+  const StringRef memSemantic      = "MemSemantic";
+  const StringRef memSyncScope     = "MemSyncScope";
+
+  auto rmwKindStr = [](triton::RMWOp kind) -> StringRef {
+    switch (kind) {
+      case triton::RMWOp::FADD: return "fadd";
+      case triton::RMWOp::ADD:  return "add";
+      case triton::RMWOp::XCHG: return "xchg";
+      case triton::RMWOp::AND:  return "and";
+      case triton::RMWOp::OR:   return "or";
+      case triton::RMWOp::XOR:  return "xor";
+      case triton::RMWOp::MAX:  return "max";
+      case triton::RMWOp::MIN:  return "min";
+      case triton::RMWOp::UMAX: return "umax";
+      case triton::RMWOp::UMIN: return "umin";
+      default:                  return "unknown";
+    }
+  };
+
+  genericOp->setAttr(genericAtomicRMW,
+      mlir::StringAttr::get(context, rmwKindStr(rmwKind)));
+  genericOp->setAttr(memSemantic,
+      rewriter.getStringAttr(stringifyEnum(op.getSem())));
+  genericOp->setAttr(memSyncScope,
+      rewriter.getStringAttr(stringifyEnum(op.getScope())));
+  genericOp->setAttr("Software", rewriter.getUnitAttr());
+
   Value resultTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, tensorResultTy, resultBuf);
   rewriter.replaceOp(op, resultTensor);
