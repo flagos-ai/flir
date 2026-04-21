@@ -1,5 +1,6 @@
 add_triton_library(TritonToUnstructured
   TritonToUnstructuredPass.cpp
+  AtomicOpsConverter.cpp
 
   DEPENDS
   TritonStructuredTableGen
@@ -20,4 +21,8 @@ add_triton_library(TritonToUnstructured
   TritonSharedAnalysisStructured
   TritonStructuredIR
   TritonSharedUtils
+  MLIRMemRefDialect
+  MLIRLinalgDialect
+  MLIRBufferizationDialect
+  MLIRLinalgTransforms
 )

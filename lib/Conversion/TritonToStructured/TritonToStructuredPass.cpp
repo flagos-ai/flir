@@ -18,6 +18,7 @@
 #include "triton-shared/Analysis/OpFoldResultUtils.h"
 #include "triton-shared/AnalysisStructured/PtrAnalysis.h"
 #include "triton-shared/Conversion/TritonToStructured/TritonToStructured.h"
+#include "triton-shared/Conversion/TritonToUnstructured/AtomicOpsConverter.h"
 #include "triton-shared/Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -331,6 +332,11 @@ public:
         op.emitWarning("Rewriting GetStructuredStateOp failed.");
       }
     });
+    RewritePatternSet canonPatterns(&getContext());
+    mlir::triton::shared::populateAtomicCanonicalizationPatterns(canonPatterns);
+    if (failed(applyPatternsGreedily(moduleOp, std::move(canonPatterns)))) {
+      moduleOp->emitWarning("AtomicOps canonicalization failed");
+    }
   }
 };
 } // namespace
