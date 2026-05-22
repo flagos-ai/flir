@@ -23,11 +23,27 @@
 #include "incubated/Conversion/TritonToUnstructureIncubated/BubbleUpOperation.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
 #define DEBUG_TYPE "triton-bubble-up-operation"
+
+constexpr llvm::StringLiteral disableBubbleUpAttrName = "disable_bubble_up";
+
+static bool isBubbleUpDisabled(Operation *op, RewriterBase &rewriter) {
+  if (op->hasAttr(disableBubbleUpAttrName))
+    return true;
+  return llvm::any_of(op->getUsers(), [&rewriter](Operation *user) {
+    auto annotationOp = dyn_cast<annotation::MarkOp>(user);
+    if (annotationOp && annotationOp->hasAttr(disableBubbleUpAttrName)) {
+      rewriter.eraseOp(annotationOp);
+      return true;
+    }
+    return false;
+  });
+}
 
 template <typename ExtractOpTy>
 BubbleUpExtract<ExtractOpTy>::BubbleUpExtract(MLIRContext *context,
@@ -39,6 +55,15 @@ template <typename ExtractOpTy>
 LogicalResult
 BubbleUpExtract<ExtractOpTy>::matchAndRewrite(ExtractOpTy op,
                                               PatternRewriter &rewriter) const {
+
+  if (isBubbleUpDisabled(op, rewriter)) {
+    if (!op->hasAttr(disableBubbleUpAttrName)) {
+      op->setAttr(disableBubbleUpAttrName, rewriter.getUnitAttr());
+      return success();
+    }
+    return failure();
+  }
+
   Value tensorValue;
   if constexpr (std::is_same_v<ExtractOpTy, tensor::ExtractOp>) {
     tensorValue = op.getTensor();
@@ -494,6 +519,9 @@ void BubbleUpOperationPass::runOnOperation() {
   if (failed(runPipeline(pm, getOperation()))) {
     signalPassFailure();
   }
+
+  moduleOp->walk(
+      [](Operation *op) { op->removeAttr(disableBubbleUpAttrName); });
 }
 
 std::unique_ptr<OperationPass<ModuleOp>>
