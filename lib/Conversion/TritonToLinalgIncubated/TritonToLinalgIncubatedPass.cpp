@@ -74,8 +74,10 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
+#ifdef __TLE__
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/DSACopyConverter.h"
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/MathConverter.h"
+#endif
 
 #include <cassert>
 #include <cstdint>
