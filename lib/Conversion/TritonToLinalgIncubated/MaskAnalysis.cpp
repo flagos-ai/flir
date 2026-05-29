@@ -206,7 +206,11 @@ LogicalResult MaskState::divStates(const MaskState &lhsState,
                                    const MaskState &rhsState,
                                    const Location &loc, OpBuilder &builder) {
   if (!lhsState.scalar && rhsState.scalar) {
+#if LLVM_VERSION_MAJOR < 22
     if (isZeroIndex(rhsState.scalar)) {
+#else
+    if (isZeroInteger(rhsState.scalar)) {
+#endif
       InFlightDiagnostic diag =
           emitError(loc)
           << "Unsupported scenario where rhs is zero constant in divide!";
