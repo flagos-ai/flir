@@ -21,7 +21,7 @@
  */
 
 #include "incubated/Conversion/AutoBlockify/Utils.h"
-#include "Utils/Utils.h"
+#include "UtilsIncubated/Utils.h"
 
 #include "llvm/Support/Debug.h"
 

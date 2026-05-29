@@ -44,8 +44,8 @@
 #include "incubated/Conversion/DynamicCVPipeline/PlanComputeBlock/Common.h"
 #include "incubated/Conversion/DynamicCVPipeline/PlanComputeBlock/ReorderOpsByBlockId.h"
 
-#include "DynamicCVPipeline/Common/Utils.h"
-#include "DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
+#include "incubated/Conversion/DynamicCVPipeline/Common/Utils.h"
+#include "incubated/Conversion/DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
 #include "TritonToUnstructure/OffsetAnalysis.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
