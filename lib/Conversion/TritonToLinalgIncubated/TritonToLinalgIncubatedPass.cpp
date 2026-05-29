@@ -954,10 +954,12 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
   this->populateTritonToLinalgConversionPatterns(tritonTypeConverter, patterns,
                                                  LAUNCH_GRID_RANK);
+#ifdef __TLE__
   triton::tle::populateTleMathOpConversionPatterns(tritonTypeConverter,
                                                    patterns);
   triton::tle::populateTleCopyOpConversionPatterns(tritonTypeConverter,
                                                    patterns);
+#endif
 
   // 6. Inject program id / number of programs arguments into each Triton kernel
   // function.

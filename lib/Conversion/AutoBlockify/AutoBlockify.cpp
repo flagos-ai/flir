@@ -149,7 +149,11 @@ bool AutoBlockifyPass::checkBlockifiable(Value v) {
       os << "User:\n" << *user << "\n";
     });
     if (isa<cf::CondBranchOp, triton::IntToPtrOp, scf::WhileOp, triton::DotOp>(user) ||
+#if LLVM_VERSION_MAJOR < 22
         llvm::any_of(user->getOperandTypes(), isTensorPtrType))
+#else
+        llvm::any_of(user->getOperandTypes(), isTensorPointerType))
+#endif
       return false;
     if (auto ifOp = dyn_cast<scf::IfOp>(user)) {
       user->setAttr(autoBlockifyRegionOpAttr, UnitAttr::get(v.getContext()));
