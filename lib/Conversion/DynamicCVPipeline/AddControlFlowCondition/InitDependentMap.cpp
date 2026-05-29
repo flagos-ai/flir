@@ -20,7 +20,7 @@
  * THE SOFTWARE.
  */
 
-#include "third_party/incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/InitDependentMap.h"
+#include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/InitDependentMap.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"

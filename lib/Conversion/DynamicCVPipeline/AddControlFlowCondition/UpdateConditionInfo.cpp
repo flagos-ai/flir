@@ -19,7 +19,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "third_party/incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/UpdateConditionInfo.h"
+#include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/UpdateConditionInfo.h"
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"

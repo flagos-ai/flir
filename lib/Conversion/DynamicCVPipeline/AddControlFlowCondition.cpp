@@ -24,7 +24,7 @@
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/CloneOps.h"
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/CreateIfOps.h"
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/UpdateConditionInfo.h"
-#include "third_party/incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/InitDependentMap.h"
+#include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/InitDependentMap.h"
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/UpdateForOps.h"
 #include "incubated/Conversion/DynamicCVPipeline/AddControlFlowCondition/UpdateLoopIterTimes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
