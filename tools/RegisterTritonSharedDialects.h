@@ -24,6 +24,9 @@
 #include "triton-shared/Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 #include "triton-shared/Dialect/TritonTilingExt/IR/TritonTilingExtDialect.h"
 
+#if LLVM_VERSION_MAJOR >= 22
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#endif
 #include "mlir/InitAllPasses.h"
 
 namespace mlir {
@@ -39,7 +42,11 @@ void registerTestMembarPass();
 
 inline void registerTritonSharedDialects(mlir::DialectRegistry &registry) {
   mlir::registerAllPasses();
+#if LLVM_VERSION_MAJOR < 22
   mlir::registerTritonPasses();
+#else
+  mlir::triton::registerTritonPasses();
+#endif
   mlir::registerLinalgPasses();
   mlir::test::registerTestAliasPass();
   mlir::test::registerTestAlignmentPass();
