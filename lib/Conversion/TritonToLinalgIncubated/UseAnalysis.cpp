@@ -23,7 +23,7 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
-#include "tle/dsa/dialect/include/IR/Dialect.h"
+//#include "tle/dsa/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
