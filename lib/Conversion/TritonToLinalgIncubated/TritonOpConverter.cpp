@@ -1075,7 +1075,11 @@ ScanConverter::convertToTargetOp(triton::ScanOp op,
 
     auto memrefType = MemRefType::get(shape, elementType);
     Value inputMemRef =
+#if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToMemrefOp>(loc, memrefType, scanInput);
+#else
+        rewriter.create<bufferization::ToBufferOp>(loc, memrefType, scanInput);
+#endif
     Value outputMemRef = rewriter.create<memref::AllocOp>(loc, memrefType);
 
     auto processDimension = [&](ArrayRef<Value> baseIdxsArray) {
@@ -1176,7 +1180,13 @@ ScanConverter::convertToTargetOp(triton::ScanOp op,
     rewriter.setInsertionPointAfter(op);
 
     Value outputTensor =
+#if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToTensorOp>(loc, outputMemRef, true);
+#else
+        rewriter.create<bufferization::ToTensorOp>(
+            loc, memref::getTensorTypeFromMemRefType(outputMemRef.getType()),
+            outputMemRef, true);
+#endif
     rewriter.replaceOp(op, outputTensor);
     return success();
   }
@@ -1233,7 +1243,11 @@ LogicalResult ScanConverter::convertToTargetOpExtended(
     memRefTypes.push_back(memRefTy);
     // Convert input tensors to MemRefs
     inputMemRefs.push_back(
+#if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToMemrefOp>(loc, memRefTy, operands[i]));
+#else
+        rewriter.create<bufferization::ToBufferOp>(loc, memRefTy, operands[i]));
+#endif
     // Allocate MemRefs for outputs
     outputMemRefs.push_back(rewriter.create<memref::AllocOp>(loc, memRefTy));
   }
@@ -1389,7 +1403,13 @@ LogicalResult ScanConverter::convertToTargetOpExtended(
   llvm::SmallVector<Value> outputTensors;
   for (auto outputMemRef : outputMemRefs) {
     outputTensors.push_back(
+#if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToTensorOp>(loc, outputMemRef, true));
+#else
+        rewriter.create<bufferization::ToTensorOp>(
+            loc, memref::getTensorTypeFromMemRefType(outputMemRef.getType()),
+            outputMemRef, true));
+#endif
   }
   rewriter.replaceOp(op, outputTensors);
 
@@ -1934,10 +1954,17 @@ SortOpConverter::matchAndRewrite(triton::ascend::SortOp op, OpAdaptor adaptor,
 LogicalResult
 DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
                                     ConversionPatternRewriter &rewriter) const {
+#if LLVM_VERSION_MAJOR < 22
   Value lhs = adaptor.getLhs();
   Value lhsScale = adaptor.getLhsScale();
   Value rhsScale = adaptor.getRhsScale();
   Value rhs = adaptor.getRhs();
+#else
+  Value lhs = adaptor.getA();
+  Value lhsScale = adaptor.getAScale();
+  Value rhsScale = adaptor.getBScale();
+  Value rhs = adaptor.getB();
+#endif
   Value c = adaptor.getC();
   RankedTensorType dstType = cast<RankedTensorType>(op.getType());
 
