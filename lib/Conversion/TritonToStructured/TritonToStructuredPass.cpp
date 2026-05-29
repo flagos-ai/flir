@@ -140,7 +140,9 @@ public:
           .getResult(0);
     };
 
+#if LLVM_VERSION_MAJOR < 22
     converter.addArgumentMaterialization(materialize);
+#endif
     converter.addSourceMaterialization(materialize);
 
     // Compute the target materialization, given a value with the pointer type,
@@ -200,7 +202,9 @@ public:
     auto materialize = [](OpBuilder &builder, Type resultType,
                           ValueRange inputs,
                           Location loc) { return inputs[0]; };
+#if LLVM_VERSION_MAJOR < 22
     converter.addArgumentMaterialization(materialize);
+#endif
     converter.addSourceMaterialization(materialize);
 
     // For each value of "pointer tuple type" that gets decomposed into a

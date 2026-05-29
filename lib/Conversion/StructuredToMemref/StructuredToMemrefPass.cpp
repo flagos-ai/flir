@@ -104,12 +104,14 @@ public:
           .getResult(0);
     });
 
+#if LLVM_VERSION_MAJOR < 22
     addArgumentMaterialization([&](OpBuilder &builder, Type resultType,
                                    ValueRange inputs,
                                    Location loc) -> Value {
       return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
           .getResult(0);
     });
+#endif
   }
 };
 

@@ -66,7 +66,9 @@ public:
           .getResult(0);
     };
     addSourceMaterialization(createUnrealizedCast);
+#if LLVM_VERSION_MAJOR < 22
     addArgumentMaterialization(createUnrealizedCast);
+#endif
   }
 };
 
