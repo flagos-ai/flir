@@ -20,9 +20,9 @@
  * THE SOFTWARE.
  */
 
-#include "TritonToGraph/DataflowGraph.h"
-#include "TritonToGraph/AliasAnalysis.h"
-#include "TritonToGraph/ControlFlowGraph.h"
+#include "incubated/Conversion/TritonToGraphIncubated/DataflowGraph.h"
+#include "incubated/Conversion/TritonToGraphIncubated/AliasAnalysis.h"
+#include "incubated/Conversion/TritonToGraphIncubated/ControlFlowGraph.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
