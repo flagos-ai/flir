@@ -20,8 +20,8 @@
  * THE SOFTWARE.
  */
 
-#include "AutoBlockify/AutoBlockify.h"
-#include "AutoBlockify/Utils.h"
+#include "incubated/Conversion/AutoBlockifyIncubated/AutoBlockify.h"
+#include "incubated/Conversion/AutoBlockifyIncubated/Utils.h"
 #include "Utils/Utils.h"
 
 #include "llvm/Support/Debug.h"
