@@ -449,10 +449,16 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
             // We need to ensure the intermediate ops are marked MixUse
             // so that they will be replaced instead of be erased without
             // conversion.
+#ifdef __TLE__
             return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
                     isa<triton::ascend::IndirectStoreOp>(curOp) ||
                     isa<triton::tle::DSACopyOp>(curOp)) &&
                    !isMetaUse(curOp);
+#else
+            return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
+                    isa<triton::ascend::IndirectStoreOp>(curOp)) &&
+                   !isMetaUse(curOp);
+#endif
           },
           /*actionFn*/
           [](OpBuilder &b, Operation *op) {
