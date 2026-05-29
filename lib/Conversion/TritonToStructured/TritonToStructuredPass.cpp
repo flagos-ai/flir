@@ -158,10 +158,17 @@ public:
           ->getResults();
     });
 
+#if LLVM_VERSION_MAJOR < 22
     scf::populateSCFStructuralOneToNTypeConversions(converter, patterns);
-
     if (failed(applyPartialOneToNConversion(getOperation(), converter,
                                             std::move(patterns)))) {
+#else
+    scf::populateSCFStructuralTypeConversions(converter, patterns);
+    ConversionTarget target1(getContext());
+    scf::populateSCFStructuralTypeConversionTarget(converter, target1);
+    if (failed(applyPartialConversion(getOperation(), target1,
+                                      std::move(patterns)))) {
+#endif
       return failure();
     }
 
@@ -225,9 +232,17 @@ public:
     });
 
     RewritePatternSet patterns(&getContext());
+#if LLVM_VERSION_MAJOR < 22
     scf::populateSCFStructuralOneToNTypeConversions(converter, patterns);
     if (failed(applyPartialOneToNConversion(getOperation(), converter,
                                             std::move(patterns)))) {
+#else
+    scf::populateSCFStructuralTypeConversions(converter, patterns);
+    ConversionTarget target2(getContext());
+    scf::populateSCFStructuralTypeConversionTarget(converter, target2);
+    if (failed(applyPartialConversion(getOperation(), target2,
+                                      std::move(patterns)))) {
+#endif
       return failure();
     }
 
