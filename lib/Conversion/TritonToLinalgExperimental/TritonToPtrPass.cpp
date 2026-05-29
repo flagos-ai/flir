@@ -97,7 +97,11 @@ struct EmptyTensorConverter : public OpConversionPattern<tensor::EmptyOp> {
   matchAndRewrite(tensor::EmptyOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     rewriter.replaceOpWithNewOp<tensor::EmptyOp>(
+#if LLVM_VERSION_MAJOR < 22
         op, op.getType().getShape(), ptr::PtrType::get(rewriter.getContext()));
+#else
+        op, op.getType().getShape(), ptr::PtrType::get(rewriter.getContext(), {}));
+#endif
     return success();
   }
 };
@@ -183,7 +187,11 @@ struct AddPtrConverter : public OpConversionPattern<triton::AddPtrOp> {
     auto scaledOffset =
         rewriter.create<arith::MulIOp>(loc, op.getOffset(), pointeeSizeInBytes);
     rewriter.replaceOpWithNewOp<tptr::PtrAddOp>(
+#if LLVM_VERSION_MAJOR < 22
         op, ptr::PtrType::get(rewriter.getContext()), adaptor.getPtr(),
+#else
+        op, ptr::PtrType::get(rewriter.getContext(), {}), adaptor.getPtr(),
+#endif
         scaledOffset);
     return success();
   }
@@ -318,7 +326,11 @@ struct IntToPtrConverter : public OpConversionPattern<triton::IntToPtrOp> {
       return failure();
     }
     rewriter.replaceOpWithNewOp<tptr::IntToPtrOp>(
+#if LLVM_VERSION_MAJOR < 22
         op, ptr::PtrType::get(rewriter.getContext()), adaptor.getSrc());
+#else
+        op, ptr::PtrType::get(rewriter.getContext(), {}), adaptor.getSrc());
+#endif
     return success();
   }
 };
@@ -407,12 +419,20 @@ public:
   TritonPtrTypeConverter(MLIRContext *context) {
     addConversion([](Type type) { return type; });
     addConversion([context](triton::PointerType ptrType) {
+#if LLVM_VERSION_MAJOR < 22
       return ptr::PtrType::get(context);
+#else
+      return ptr::PtrType::get(context, {});
+#endif
     });
     addConversion([context](RankedTensorType tensorType) {
       if (isa<triton::PointerType>(tensorType.getElementType())) {
         return RankedTensorType::get(tensorType.getShape(),
+#if LLVM_VERSION_MAJOR < 22
                                      ptr::PtrType::get(context));
+#else
+                                     ptr::PtrType::get(context, {}));
+#endif
       }
       return tensorType;
     });
@@ -423,7 +443,9 @@ public:
     };
     addTargetMaterialization(createCast);
     addSourceMaterialization(createCast);
+#if LLVM_VERSION_MAJOR < 22
     addArgumentMaterialization(createCast);
+#endif
   }
 };
 
