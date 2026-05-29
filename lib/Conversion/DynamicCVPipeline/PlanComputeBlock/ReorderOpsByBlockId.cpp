@@ -46,7 +46,7 @@
 
 #include "incubated/Conversion/DynamicCVPipeline/Common/Utils.h"
 #include "incubated/Conversion/DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
-#include "TritonToUnstructure/OffsetAnalysis.h"
+#include "incubated/Conversion/TritonToUnstructureIncubated/OffsetAnalysis.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 using namespace mlir;
