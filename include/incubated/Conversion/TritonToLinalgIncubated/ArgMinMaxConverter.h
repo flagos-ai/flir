@@ -136,7 +136,11 @@ class ArgMinMaxBaseConverter : public OpConversionPattern<triton::ReduceOp> {
 public:
   ArgMinMaxBaseConverter(MLIRContext *context) : OpConversionPattern(context) {}
 
+#if LLVM_VERSION_MAJOR < 22
   LogicalResult match(triton::ReduceOp op) const override final {
+#else
+  LogicalResult matchImpl(triton::ReduceOp op) const {
+#endif
     if (op.getBody()->getNumArguments() != 4) {
       return failure();
     }
@@ -191,8 +195,13 @@ public:
     return success();
   }
 
+#if LLVM_VERSION_MAJOR < 22
   void rewrite(triton::ReduceOp op, OpAdaptor adaptor,
                ConversionPatternRewriter &rewriter) const override final {
+#else
+  void rewriteImpl(triton::ReduceOp op, OpAdaptor adaptor,
+                   ConversionPatternRewriter &rewriter) const {
+#endif
     auto loc = op.getLoc();
     auto elemTypes = op.getElementTypes();
 
@@ -321,6 +330,16 @@ public:
       rewriter.replaceOp(op, linalgOp);
     }
   }
+
+#if LLVM_VERSION_MAJOR >= 22
+  LogicalResult matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (failed(matchImpl(op)))
+      return failure();
+    rewriteImpl(op, adaptor, rewriter);
+    return success();
+  }
+#endif
 };
 
 class ArgMinConverter : public ArgMinMaxBaseConverter<ArgMinConverter> {
