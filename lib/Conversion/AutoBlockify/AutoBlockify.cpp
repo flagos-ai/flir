@@ -23,7 +23,7 @@
 #include "incubated/Conversion/AutoBlockify/AutoBlockify.h"
 #include "incubated/Conversion/AutoBlockify/Utils.h"
 #include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-#include "Utils/Utils.h"
+#include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Pass/PassManager.h"
