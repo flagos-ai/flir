@@ -25,7 +25,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
-#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/AddControlFlowCondition.h"
 
 namespace mlir {
 namespace triton {

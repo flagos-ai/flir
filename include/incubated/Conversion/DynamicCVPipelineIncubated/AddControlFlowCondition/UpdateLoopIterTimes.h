@@ -30,7 +30,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
-#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/AddControlFlowCondition.h"
 
 namespace mlir {
 namespace triton {

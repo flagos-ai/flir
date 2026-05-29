@@ -29,7 +29,7 @@ namespace mlir {
 namespace triton {
 
 #define GEN_PASS_REGISTRATION
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/Passes.h.inc"
 
 } // namespace triton
 } // namespace mlir

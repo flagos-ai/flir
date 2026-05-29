@@ -27,10 +27,10 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #define GEN_PASS_DECL_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/Passes.h.inc"
 
 #define GEN_PASS_DEF_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/Passes.h.inc"
 
 extern bool compileOn91095Flag;
 

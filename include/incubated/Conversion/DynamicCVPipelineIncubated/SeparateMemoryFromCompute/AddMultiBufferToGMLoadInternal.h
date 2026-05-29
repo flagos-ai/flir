@@ -23,7 +23,7 @@
 #ifndef TRITON_ADAPTER_ADD_MULTI_BUFFER_TO_GMLOAD_INTERNAL_H
 #define TRITON_ADAPTER_ADD_MULTI_BUFFER_TO_GMLOAD_INTERNAL_H
 
-#include "ascend/include/DynamicCVPipeline/SeparateMemoryFromCompute/AddMultiBufferToGMLoadTypes.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/SeparateMemoryFromCompute/AddMultiBufferToGMLoadTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"

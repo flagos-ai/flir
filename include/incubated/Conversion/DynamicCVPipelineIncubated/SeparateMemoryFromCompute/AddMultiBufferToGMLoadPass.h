@@ -23,7 +23,7 @@
 #ifndef TRITON_ADAPTER_ADD_MULTI_BUFFER_TO_GMLOAD_PASS_H
 #define TRITON_ADAPTER_ADD_MULTI_BUFFER_TO_GMLOAD_PASS_H
 
-#include "ascend/include/DynamicCVPipeline/SeparateMemoryFromCompute/AddMultiBufferToGMLoadTypes.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/SeparateMemoryFromCompute/AddMultiBufferToGMLoadTypes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"

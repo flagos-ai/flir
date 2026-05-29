@@ -35,7 +35,7 @@ std::unique_ptr<OperationPass<mlir::ModuleOp>> createBuildCFGPass();
 
 // 注册所有 CFG 相关的 passes
 #define GEN_PASS_REGISTRATION
-#include "ascend/include/TritonToGraph/Passes.h.inc"
+#include "incubated/Conversion/TritonToGraphIncubated/Passes.h.inc"
 
 }
 } // namespace triton

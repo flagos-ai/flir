@@ -39,7 +39,7 @@ std::unique_ptr<OperationPass<ModuleOp>> createDAGSyncPass();
 std::unique_ptr<OperationPass<ModuleOp>> createDAGScopePass();
 
 #define GEN_PASS_REGISTRATION
-#include "ascend/include/TritonAffinityOpt/Passes.h.inc"
+#include "incubated/Conversion/TritonAffinityOptIncubated/Passes.h.inc"
 
 } // namespace triton
 } // namespace mlir

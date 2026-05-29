@@ -23,8 +23,8 @@
 #ifndef TRITON_ADAPTER_INTER_CORE_TRANSFER_AND_SYNC_H
 #define TRITON_ADAPTER_INTER_CORE_TRANSFER_AND_SYNC_H
 
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
-#include "ascend/include/DynamicCVPipeline/Common/FlagIdManager.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/SplitDataflow/DataDependencyAnalysis.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/Common/FlagIdManager.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"

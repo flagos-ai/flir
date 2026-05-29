@@ -23,7 +23,7 @@
 #ifndef TRITON_ADAPTER_OP_CLASSIFIER_H
 #define TRITON_ADAPTER_OP_CLASSIFIER_H
 
-#include "ascend/include/DynamicCVPipeline/Common/MemoryEffectsTracker.h"
+#include "incubated/Conversion/DynamicCVPipelineIncubated/Common/MemoryEffectsTracker.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Analysis/AliasAnalysis.h"

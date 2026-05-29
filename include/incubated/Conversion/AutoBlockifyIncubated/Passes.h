@@ -29,7 +29,7 @@ namespace mlir {
 namespace triton {
 
 #define GEN_PASS_REGISTRATION
-#include "ascend/include/AutoBlockify/Passes.h.inc"
+#include "incubated/Conversion/AutoBlockifyIncubated/Passes.h.inc"
 
 } // namespace triton
 } // namespace mlir

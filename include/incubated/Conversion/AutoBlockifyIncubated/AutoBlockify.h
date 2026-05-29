@@ -28,10 +28,10 @@
 #include "mlir/IR/PatternMatch.h"
 
 #define GEN_PASS_DECL_AUTOBLOCKIFY
-#include "ascend/include/AutoBlockify/Passes.h.inc"
+#include "incubated/Conversion/AutoBlockifyIncubated/Passes.h.inc"
 
 #define GEN_PASS_DEF_AUTOBLOCKIFY
-#include "ascend/include/AutoBlockify/Passes.h.inc"
+#include "incubated/Conversion/AutoBlockifyIncubated/Passes.h.inc"
 
 namespace mlir {
 namespace triton {
