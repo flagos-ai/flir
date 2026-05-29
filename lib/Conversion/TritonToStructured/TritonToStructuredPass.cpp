@@ -27,7 +27,9 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#if LLVM_VERSION_MAJOR < 22
 #include "mlir/Transforms/OneToNTypeConversion.h"
+#endif
 #include "mlir/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 

@@ -67,7 +67,11 @@ static Value ensureMemRef(OpBuilder &b, Location loc, Value val,
   if (isa<MemRefType>(val.getType()))
     return val;
   auto mrt = MemRefType::get(shape, elemTy);
+#if LLVM_VERSION_MAJOR < 22
   return b.create<bufferization::ToMemrefOp>(loc, mrt, val);
+#else
+  return b.create<bufferization::ToBufferOp>(loc, mrt, val);
+#endif
 }
 
 } // namespace
