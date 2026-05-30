@@ -15,13 +15,12 @@ endif()
 add_subdirectory(include)
 add_subdirectory(lib)
 
-if(NOT FLAGTREE_BACKEND STREQUAL "tsingmicro")
-  #add_subdirectory(test)
-  #add_subdirectory(tools)
+if(NOT FLAGTREE_BACKEND)
+  add_subdirectory(test)
+  add_subdirectory(tools)
 endif()
 
 if (TRITON_SHARED_BUILD_CPU_BACKEND)
     add_triton_plugin(TritonShared ${CMAKE_CURRENT_SOURCE_DIR}/triton_shared.cc LINK_LIBS TritonSharedAnalysis TritonToLinalg TritonTilingExtIR)
 endif()
-
 
