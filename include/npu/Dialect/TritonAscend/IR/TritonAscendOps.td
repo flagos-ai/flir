@@ -104,16 +104,6 @@ def EmbeddingGatherOp : TT_Ascend_Op<"embedding_gather", [
       attr-dict `->` type($result)
     }];
 
-    let builders = [
-      OpBuilder<(ins
-          "Value":$src,
-          "Value":$idx,
-          "Value":$bound,
-          "Value":$blocksize,
-          "ValueRange":$offsets,
-          "ValueRange":$numels
-      )>
-    ];
     // let hasCanonicalizer = 1;
 }
 
@@ -371,15 +361,6 @@ def IndirectLoadOp : TT_Ascend_Op<"indirect_load", [
     (`,` $other^ `:` type($other))?
     attr-dict `->` type($result)
   }];
-
-  let builders = [
-    OpBuilder<(ins
-      "Value":$src,
-      "Value":$offsets,
-      "Value":$mask,
-      "Value":$other
-    )>
-  ];
 }
 
 

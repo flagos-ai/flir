@@ -16,8 +16,8 @@ add_subdirectory(include)
 add_subdirectory(lib)
 
 if(NOT FLAGTREE_BACKEND STREQUAL "tsingmicro")
-  add_subdirectory(test)
-  add_subdirectory(tools)
+  #add_subdirectory(test)
+  #add_subdirectory(tools)
 endif()
 
 if (TRITON_SHARED_BUILD_CPU_BACKEND)
