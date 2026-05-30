@@ -92,10 +92,9 @@ def TPTR_TypeOffsetOp : TPTR_Op<"type_offset", [ConstantLike, Pure]> {
 
   let arguments = (ins TypeAttr:$baseType);
   let results = (outs AnySignlessIntegerOrIndex:$result);
-  // There are no builders with llvm 22
-  // let builders = [
-  //   OpBuilder<(ins "TypeAttr":$baseType, CArg<"Type", "nullptr">:$resultTy)>
-  // ];
+  let builders = [
+    OpBuilder<(ins "TypeAttr":$baseType, CArg<"Type", "nullptr">:$resultTy)>
+  ];
   let assemblyFormat = [{
      attr-dict $baseType custom<IntType>(type($result))
   }];

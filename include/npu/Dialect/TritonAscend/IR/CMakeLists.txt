@@ -1,6 +1,12 @@
 set(MLIR_BINARY_DIR ${CMAKE_BINARY_DIR})
 
-set(LLVM_TARGET_DEFINITIONS TritonAscendOps.td)
+if(LLVM_MAJOR_VERSION_22_OR_HIGHER)
+  set(TritonAscendOpsTd TritonAscendOps.td)
+else()
+  set(TritonAscendOpsTd TritonAscendOpsForLLVM21.td)
+endif()
+
+set(LLVM_TARGET_DEFINITIONS ${TritonAscendOpsTd})
 mlir_tablegen(TritonAscendDialect.h.inc -gen-dialect-decls -dialect=ascend)
 mlir_tablegen(TritonAscendDialect.cpp.inc -gen-dialect-defs -dialect=ascend)
 mlir_tablegen(TritonAscendOps.h.inc -gen-op-decls)
