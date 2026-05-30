@@ -36,7 +36,11 @@ namespace {
 /// Generic conversion for any DestinationStyleOpInterface on tensors.
 static LogicalResult bufferizeTritonTilingExtDestinationStyleOpInterface(
     RewriterBase &rewriter, DestinationStyleOpInterface op,
+#if LLVM_VERSION_MAJOR < 22
     const BufferizationOptions &options) {
+#else
+    const BufferizationOptions &options, const BufferizationState &state) {
+#endif
   // Take a guard before anything else.
   OpBuilder::InsertionGuard g(rewriter);
   rewriter.setInsertionPoint(op);
@@ -58,7 +62,11 @@ static LogicalResult bufferizeTritonTilingExtDestinationStyleOpInterface(
       newInputBuffers.push_back(opOperand->get());
       continue;
     }
+#if LLVM_VERSION_MAJOR < 22
     FailureOr<Value> buffer = getBuffer(rewriter, opOperand->get(), options);
+#else
+    FailureOr<Value> buffer = getBuffer(rewriter, opOperand->get(), options, state);
+#endif
     if (failed(buffer))
       return failure();
     newInputBuffers.push_back(*buffer);
@@ -68,8 +76,13 @@ static LogicalResult bufferizeTritonTilingExtDestinationStyleOpInterface(
   SmallVector<Value> newOutputBuffers;
   for (OpResult opResult : op->getOpResults()) {
     OpOperand *opOperand = op.getDpsInitOperand(opResult.getResultNumber());
+#if LLVM_VERSION_MAJOR < 22
     FailureOr<Value> resultBuffer =
         getBuffer(rewriter, opOperand->get(), options);
+#else
+    FailureOr<Value> resultBuffer =
+        getBuffer(rewriter, opOperand->get(), options, state);
+#endif
     if (failed(resultBuffer))
       return failure();
     newOutputBuffers.push_back(*resultBuffer);
@@ -108,11 +121,20 @@ struct TritonTilingExtOpInterface
     return cast<DestinationStyleOpInterface>(op).isDpsInit(&opOperand);
   }
 
+#if LLVM_VERSION_MAJOR < 22
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeTritonTilingExtDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options);
   }
+#else
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options,
+                          const BufferizationState &state) const {
+    return bufferizeTritonTilingExtDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options, state);
+  }
+#endif
 };
 
 template <typename... Ops> struct TritonTilingExtOpInterfaceHelper {

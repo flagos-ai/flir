@@ -568,7 +568,11 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
   MemRefType dstType =
       MemRefType::get(dstOriType.getShape(), dstOriType.getElementType());
   Value inputMemref =
+#if LLVM_VERSION_MAJOR < 22
       rewriter.create<bufferization::ToMemrefOp>(loc, dstType, val);
+#else
+      rewriter.create<bufferization::ToBufferOp>(loc, dstType, val);
+#endif
 
   // 2. handle the mask for the atomic op
   // When the dsl do not pass the mask to this op like
@@ -772,7 +776,11 @@ LogicalResult AtomicRMWNewConverter::matchAndRewrite(
     if (inputMemref)
       return inputMemref;
     inputMemref =
+#if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToMemrefOp>(loc, ptrType, inputVal);
+#else
+        rewriter.create<bufferization::ToBufferOp>(loc, ptrType, inputVal);
+#endif
     return inputMemref;
   };
 
@@ -823,7 +831,11 @@ LogicalResult AtomicRMWNewConverter::matchAndRewrite(
       MemRefType maskTypeM =
           MemRefType::get(maskTypeT.getShape(), maskTypeT.getElementType());
       memrefMask =
+#if LLVM_VERSION_MAJOR < 22
           rewriter.create<bufferization::ToMemrefOp>(loc, maskTypeM, mask);
+#else
+          rewriter.create<bufferization::ToBufferOp>(loc, maskTypeM, mask);
+#endif
     }
     rewriter.create<hfusion::AtomicXchgOp>(
         op.getLoc(), TypeRange(), getInputMemref(), dstMemref, memrefMask);
@@ -878,10 +890,18 @@ AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op, OpAdaptor adaptor,
   MemRefType dstType =
       MemRefType::get(dstOriType.getShape(), dstOriType.getElementType());
   Value inputMemref =
+#if LLVM_VERSION_MAJOR < 22
       rewriter.create<bufferization::ToMemrefOp>(loc, dstType, val);
+#else
+      rewriter.create<bufferization::ToBufferOp>(loc, dstType, val);
+#endif
 
   Value cmpMemref =
+#if LLVM_VERSION_MAJOR < 22
       rewriter.create<bufferization::ToMemrefOp>(loc, dstType, cmp);
+#else
+      rewriter.create<bufferization::ToBufferOp>(loc, dstType, cmp);
+#endif
 
   // create element-wise map
   int64_t rank = type.getRank();

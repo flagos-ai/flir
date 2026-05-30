@@ -27,7 +27,9 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#if LLVM_VERSION_MAJOR < 22
 #include "mlir/Transforms/OneToNTypeConversion.h"
+#endif
 #include "mlir/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
@@ -140,7 +142,9 @@ public:
           .getResult(0);
     };
 
+#if LLVM_VERSION_MAJOR < 22
     converter.addArgumentMaterialization(materialize);
+#endif
     converter.addSourceMaterialization(materialize);
 
     // Compute the target materialization, given a value with the pointer type,
@@ -154,10 +158,17 @@ public:
           ->getResults();
     });
 
+#if LLVM_VERSION_MAJOR < 22
     scf::populateSCFStructuralOneToNTypeConversions(converter, patterns);
-
     if (failed(applyPartialOneToNConversion(getOperation(), converter,
                                             std::move(patterns)))) {
+#else
+    scf::populateSCFStructuralTypeConversions(converter, patterns);
+    ConversionTarget target1(getContext());
+    scf::populateSCFStructuralTypeConversionTarget(converter, target1);
+    if (failed(applyPartialConversion(getOperation(), target1,
+                                      std::move(patterns)))) {
+#endif
       return failure();
     }
 
@@ -200,7 +211,9 @@ public:
     auto materialize = [](OpBuilder &builder, Type resultType,
                           ValueRange inputs,
                           Location loc) { return inputs[0]; };
+#if LLVM_VERSION_MAJOR < 22
     converter.addArgumentMaterialization(materialize);
+#endif
     converter.addSourceMaterialization(materialize);
 
     // For each value of "pointer tuple type" that gets decomposed into a
@@ -219,9 +232,17 @@ public:
     });
 
     RewritePatternSet patterns(&getContext());
+#if LLVM_VERSION_MAJOR < 22
     scf::populateSCFStructuralOneToNTypeConversions(converter, patterns);
     if (failed(applyPartialOneToNConversion(getOperation(), converter,
                                             std::move(patterns)))) {
+#else
+    scf::populateSCFStructuralTypeConversions(converter, patterns);
+    ConversionTarget target2(getContext());
+    scf::populateSCFStructuralTypeConversionTarget(converter, target2);
+    if (failed(applyPartialConversion(getOperation(), target2,
+                                      std::move(patterns)))) {
+#endif
       return failure();
     }
 

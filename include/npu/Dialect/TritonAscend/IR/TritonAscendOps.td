@@ -104,16 +104,16 @@ def EmbeddingGatherOp : TT_Ascend_Op<"embedding_gather", [
       attr-dict `->` type($result)
     }];
 
-    let builders = [
-      OpBuilder<(ins
-          "Value":$src,
-          "Value":$idx,
-          "Value":$bound,
-          "Value":$blocksize,
-          "ValueRange":$offsets,
-          "ValueRange":$numels
-      )>
-    ];
+    // let builders = [
+    //   OpBuilder<(ins
+    //       "Value":$src,
+    //       "Value":$idx,
+    //       "Value":$bound,
+    //      "Value":$blocksize,
+    //       "ValueRange":$offsets,
+    //       "ValueRange":$numels
+    //   )>
+    // ];
     // let hasCanonicalizer = 1;
 }
 
@@ -372,14 +372,14 @@ def IndirectLoadOp : TT_Ascend_Op<"indirect_load", [
     attr-dict `->` type($result)
   }];
 
-  let builders = [
-    OpBuilder<(ins
-      "Value":$src,
-      "Value":$offsets,
-      "Value":$mask,
-      "Value":$other
-    )>
-  ];
+  // let builders = [
+  //   OpBuilder<(ins
+  //     "Value":$src,
+  //     "Value":$offsets,
+  //     "Value":$mask,
+  //     "Value":$other
+  //   )>
+  // ];
 }
 
 
@@ -483,6 +483,38 @@ def SortOp : TT_Ascend_Op<"sort", [
   );
 
   let assemblyFormat = "$src `,` $dim `,` $descending attr-dict `:` type($src) `->` type($sorted)";
+}
+
+//
+// Conv Op
+//
+def Conv1dOp : TT_Ascend_Op<"conv1d", [
+  Pure,
+  DeclareOpInterfaceMethods<InferTypeOpInterface>
+]> {
+  let summary = "1D convolution operation";
+  let description = [{
+      Performs a 1D convolution operation on the input tensor.
+  }];
+
+  let arguments = (ins
+      TT_Tensor:$input,
+      TT_Tensor:$weight,
+      Optional<TT_Tensor>:$bias,
+      I64Attr:$stride,
+      I64Attr:$padding_size,
+      I64Attr:$dilation,
+      I64Attr:$groups
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{
+      `(` operands `)`
+      attr-dict `:` functional-type(operands, $result)
+  }];
+
+  let hasVerifier = 1;
 }
 
 #endif // TRITON_ASCEND_OPS

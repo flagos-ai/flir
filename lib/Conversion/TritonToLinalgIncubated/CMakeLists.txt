@@ -1,3 +1,7 @@
+if(FLAGTREE_TLE)
+  set(TleToLinalgLib TleToLinalg)
+endif()
+
 add_triton_library(TritonToLinalgIncubated
         TritonToLinalgIncubatedPass.cpp
         LoadStoreConverter.cpp
@@ -28,5 +32,5 @@ add_triton_library(TritonToLinalgIncubated
   MLIRTritonNPUUtils
   MLIRSCFTransforms
   MLIRLinalgTransforms
-  TleToLinalg
+  ${TleToLinalgLib}
 )
