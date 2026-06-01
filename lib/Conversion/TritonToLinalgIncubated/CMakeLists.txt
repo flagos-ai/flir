@@ -1,4 +1,4 @@
-if(FLAGTREE_TLE)
+if(FLAGTREE_TLE_STRUCT)
   set(TleToLinalgLib TleToLinalg)
 endif()
 

@@ -74,7 +74,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
-#ifdef __TLE__
+#ifdef __TLE_STRUCT__
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/DSACopyConverter.h"
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/MathConverter.h"
 #endif
@@ -954,7 +954,7 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
   this->populateTritonToLinalgConversionPatterns(tritonTypeConverter, patterns,
                                                  LAUNCH_GRID_RANK);
-#ifdef __TLE__
+#ifdef __TLE_STRUCT__
   triton::tle::populateTleMathOpConversionPatterns(tritonTypeConverter,
                                                    patterns);
   triton::tle::populateTleCopyOpConversionPatterns(tritonTypeConverter,
