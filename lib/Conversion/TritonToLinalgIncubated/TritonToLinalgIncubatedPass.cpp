@@ -1215,3 +1215,7 @@ triton::Incubated::createTritonToLinalgIncubatedPass(bool globalKernel,
       globalKernel, namedOps, enableNd2NzOnVector, enableSelectAnalysis,
       compileOn91095);
 }
+
+std::unique_ptr<OperationPass<ModuleOp>> triton::Incubated::createTritonToLinalgIncubatedPass() {
+  return std::make_unique<TritonToLinalgIncubatedPass>();
+}
