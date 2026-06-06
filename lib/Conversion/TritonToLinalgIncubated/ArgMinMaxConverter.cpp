@@ -63,12 +63,8 @@ float ArgMinConverter::getBaseReductionValue() {
   return std::numeric_limits<float>::infinity();
 }
 
-int8_t ArgMinConverter::getBaseReductionIntValue() {
-  return std::numeric_limits<int8_t>::max();
-}
-uint8_t ArgMinConverter::getBaseReductionUIntValue() {
-  return std::numeric_limits<uint8_t>::max();
-}
+int8_t ArgMinConverter::getBaseReductionIntValue() { return std::numeric_limits<int8_t>::max(); }
+uint8_t ArgMinConverter::getBaseReductionUIntValue() { return std::numeric_limits<uint8_t>::max(); }
 
 // ArgMaxConverter functions
 LogicalResult ArgMaxConverter::matchComparisonResult(
@@ -103,11 +99,7 @@ float ArgMaxConverter::getBaseReductionValue() {
   return -std::numeric_limits<float>::infinity();
 }
 
-int8_t ArgMaxConverter::getBaseReductionIntValue() {
-  return std::numeric_limits<int8_t>::min();
-}
-uint8_t ArgMaxConverter::getBaseReductionUIntValue() {
-  return std::numeric_limits<uint8_t>::min();
-}
+int8_t ArgMaxConverter::getBaseReductionIntValue() { return std::numeric_limits<int8_t>::min(); }
+uint8_t ArgMaxConverter::getBaseReductionUIntValue() { return std::numeric_limits<uint8_t>::min(); }
 
 } // namespace TTOpConverters
