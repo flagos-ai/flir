@@ -23,13 +23,10 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
-#ifdef __TLE_STRUCT__
-#include "tle/dsa/dialect/include/IR/Dialect.h"
-#endif
-#include "triton/Dialect/Triton/IR/Dialect.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
+#include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -58,7 +55,7 @@ std::string stringifyUseType(UseType useTy) {
 }
 
 #if LLVM_VERSION_MAJOR >= 20
-LogicalResult mlir::triton::Incubated::UseAnalysis::visitOperation(
+LogicalResult triton::Incubated::UseAnalysis::visitOperation(
     Operation *op, ArrayRef<UseInfo *> operands,
     ArrayRef<const UseInfo *> results) {
 #else

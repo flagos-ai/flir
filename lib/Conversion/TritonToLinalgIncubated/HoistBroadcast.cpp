@@ -224,5 +224,4 @@ bool BroadcastHoister::canBroadcast() {
   }
   return source != nullptr && isa<triton::PointerType>(source.getType());
 }
-
 } // namespace HoistBroadcast

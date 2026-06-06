@@ -3,7 +3,7 @@ if(FLAGTREE_TLE_STRUCT)
 endif()
 
 add_triton_library(TritonToLinalgIncubated
-        TritonToLinalgIncubatedPass.cpp
+        TritonToLinalgPass.cpp
         LoadStoreConverter.cpp
         FunctionConverter.cpp
         ArgMinMaxConverter.cpp
