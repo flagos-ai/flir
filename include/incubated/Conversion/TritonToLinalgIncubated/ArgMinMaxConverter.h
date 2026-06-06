@@ -332,8 +332,9 @@ public:
   }
 
 #if LLVM_VERSION_MAJOR >= 22
-  LogicalResult matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     if (failed(matchImpl(op)))
       return failure();
     rewriteImpl(op, adaptor, rewriter);
