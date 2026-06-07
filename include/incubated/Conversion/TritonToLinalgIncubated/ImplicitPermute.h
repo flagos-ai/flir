@@ -88,8 +88,8 @@ public:
 
 class MemOpTransformer {
 public:
-  TritonToStructured::PtrState ptrState;
-  TritonToStructured::MaskState maskState;
+  TritonToStructuredIncubated::PtrState ptrState;
+  TritonToStructuredIncubated::MaskState maskState;
 
   enum class MemType { load, store, deafaultType };
 
