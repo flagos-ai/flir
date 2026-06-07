@@ -124,7 +124,7 @@ static MaskDecomposition decomposeAndMask(Operation *op, Value mask,
   SmallVector<Value> discLeaves;
 
   for (Value leaf : leaves) {
-    MaskState st;
+    Incubated::MaskState st;
     if (st.parse(leaf, loc, rewriter).succeeded()) {
       if (st.isMask())
         contLeaves.push_back(leaf);
