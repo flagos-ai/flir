@@ -62,6 +62,7 @@
 namespace TTOpConverters {
 using namespace mlir;
 using namespace triton;
+using namespace Incubated;
 
 static const llvm::SmallVector<llvm::StringRef> libdeviceOps = {
     // Basic operations

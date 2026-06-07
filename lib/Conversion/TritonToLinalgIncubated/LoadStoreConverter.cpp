@@ -77,7 +77,7 @@
 namespace LoadStoreConverter {
 using namespace mlir;
 using namespace triton;
-using namespace mlir::triton::Incubated;
+using namespace Incubated;
 const std::string MayImplicitTransposeWithLastAxisTAG =
     "MayImplicitTransposeWithLastAxis";
 
@@ -652,7 +652,6 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
 #else
     return rewriter.create<bufferization::ToBufferOp>(loc, ptrType, inputVal);
 #endif
-    return inputMemref;
   };
   auto inputMemref = getInputMemref();
   auto inputMemrefType = cast<MemRefType>(inputMemref.getType());

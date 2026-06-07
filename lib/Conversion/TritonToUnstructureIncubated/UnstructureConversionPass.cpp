@@ -280,7 +280,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     }
   }
 
-  std::optional<Incubated::MaskState> mstate = runMaskAnalysis(op, rewriter);
+  std::optional<Incubated::MaskState> mstate =
+      Incubated::runMaskAnalysis(op, rewriter);
 
   if (op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
     if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
@@ -669,7 +670,7 @@ TritonToUnstructureIncubatedPass::processIfYieldAddHoistOperations(ModuleOp modu
 
 TritonToUnstructureIncubatedPass::TritonToUnstructureIncubatedPass(
     const TritonToUnstructureIncubatedOptions &options)
-    : TritonToUnstructureBase(options) {}
+    : TritonToUnstructureIncubatedBase(options) {}
 
 void TritonToUnstructureIncubatedPass::runOnOperation() {
   compileOn91095Flag = this->compileOn91095;
