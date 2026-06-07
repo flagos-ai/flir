@@ -763,7 +763,7 @@ TritonToLinalgIncubatedPass::processPtrBroadcastOperations(ModuleOp moduleOp) {
 }
 
 LogicalResult
-TritonToLinalgPass::processImplicitPermuteOperations(ModuleOp moduleOp) {
+TritonToLinalgIncubatedPass::processImplicitPermuteOperations(ModuleOp moduleOp) {
   mlir::RewritePatternSet patterns(&getContext());
   patterns.add<ImplicitPermute::LoadConverter>(patterns.getContext());
   patterns.add<ImplicitPermute::StoreConverter>(patterns.getContext());
@@ -783,7 +783,7 @@ TritonToLinalgPass::processImplicitPermuteOperations(ModuleOp moduleOp) {
 }
 
 LogicalResult
-TritonToLinalgPass::processLegalStrideOperations(ModuleOp moduleOp) {
+TritonToLinalgIncubatedPass::processLegalStrideOperations(ModuleOp moduleOp) {
   mlir::ConversionTarget target(getContext());
   target.addLegalOp<arith::ConstantOp>();
   target.addDynamicallyLegalOp<memref::ReinterpretCastOp>(
