@@ -50,6 +50,63 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
+class SplatCmpConverter : public OpRewritePattern<arith::CmpIOp> {
+public:
+  explicit SplatCmpConverter(MLIRContext *context)
+      : OpRewritePattern<arith::CmpIOp>(context) {}
+  using OpRewritePattern<arith::CmpIOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::CmpIOp op,
+                                PatternRewriter &rewriter) const override;
+};
+
+class AddPtrSplatConverter : public OpRewritePattern<triton::AddPtrOp> {
+public:
+  explicit AddPtrSplatConverter(MLIRContext *context)
+      : OpRewritePattern<triton::AddPtrOp>(context) {}
+
+  LogicalResult matchAndRewrite(triton::AddPtrOp op,
+                                PatternRewriter &rewriter) const override;
+};
+
+class LoadBroadcastConverter : public OpRewritePattern<triton::LoadOp> {
+public:
+  explicit LoadBroadcastConverter(MLIRContext *context)
+      : OpRewritePattern<triton::LoadOp>(context) {}
+
+  LogicalResult matchAndRewrite(triton::LoadOp op,
+                                PatternRewriter &rewriter) const override;
+};
+
+class IfYieldAddHoistConverter : public OpRewritePattern<scf::IfOp> {
+public:
+  explicit IfYieldAddHoistConverter(MLIRContext *context)
+      : OpRewritePattern<scf::IfOp>(context) {}
+
+  LogicalResult matchAndRewrite(scf::IfOp ifOp,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  bool isSupportedTensorResultType(Type type) const;
+
+  bool isDefinedOutsideIf(Value value, scf::IfOp ifOp) const;
+
+  bool extractAddendFromAddExpr(Value maybeAddExpr, Value baseValue,
+                                Value &addendOut) const;
+
+  Value buildZeroTensorLikeType(Type laneType, Location loc,
+                                PatternRewriter &rewriter) const;
+
+  bool tryRewriteSingleLane(unsigned laneIdx, Value baseBranchYield,
+                            Value addExprBranchYield, bool baseInThenBranch,
+                            Type laneType, scf::IfOp ifOp,
+                            PatternRewriter &rewriter,
+                            SmallVectorImpl<Value> &updatedThenYieldOperands,
+                            SmallVectorImpl<Value> &updatedElseYieldOperands,
+                            SmallVectorImpl<Value> &hoistedBasePerLane,
+                            SmallVectorImpl<bool> &laneRewrittenFlags) const;
+};
+
 class PromotePointerIterArgsPattern : public OpRewritePattern<scf::ForOp> {
 public:
   explicit PromotePointerIterArgsPattern(MLIRContext *context)
@@ -66,7 +123,15 @@ private:
     Value offsetValue; // Offset value used in addptr operation
     Value newIterArg;  // New integer iteration argument
     Value addPtrValue; // The addptr operation result that updates the pointer
+    // Offset value used in advancePtr operation (with explicit inlined
+    // capacity)
+    SmallVector<Value> offsetValues;
+    SmallVector<Value> newInitArgs;
+    SmallVector<Type> newIterArgTypes;
   };
+
+  LogicalResult matchAndRewriteForAddPtr(scf::ForOp forOp,
+                                         PatternRewriter &rewriter) const;
 
   // Check if the loop meets basic transformation conditions
   LogicalResult matchLoop(scf::ForOp forOp) const;
@@ -155,8 +220,139 @@ private:
   Value reconstructPointer(scf::ForOp forOp, unsigned idx, Value intResult,
                            ArrayRef<PointerArgInfo> pointerArgs,
                            PatternRewriter &rewriter) const;
+
+  LogicalResult matchAndRewriteAdvancePtr(scf::ForOp forOp,
+                                          PatternRewriter &rewriter) const;
+
+  SmallVector<PointerArgInfo>
+  collectPointerIterArgsForAdvancePtr(scf::ForOp forOp) const;
+
+  std::optional<PointerArgInfo>
+  analyzePointerIterArgForAdvancePtr(Value iterArg, Block &loopBody) const;
+
+  std::tuple<SmallVector<Value>, SmallVector<Type>,
+             DenseMap<unsigned, unsigned>>
+  createNewIterArgsForAdvancePtr(scf::ForOp forOp,
+                                 SmallVector<PointerArgInfo> &pointerArgs,
+                                 PatternRewriter &rewriter) const;
+
+  IRMapping
+  createIRMappingForAdvancePtr(scf::ForOp oldForOp, scf::ForOp newForOp,
+                               SmallVector<PointerArgInfo> &pointerArgs,
+                               DenseMap<unsigned, unsigned> &indexMap,
+                               PatternRewriter &rewriter) const;
+
+  Value rebuildPointerForAdvancePtr(scf::ForOp forOp,
+                                    ArrayRef<PointerArgInfo> pointerArgs,
+                                    unsigned idx,
+                                    PatternRewriter &rewriter) const;
+
+  SmallVector<Value>
+  createOffsetsForAdvancePtr(unsigned idx, ArrayRef<PointerArgInfo> pointerArgs,
+                             DenseMap<unsigned, unsigned> &indexMap,
+                             PatternRewriter &rewriter) const;
+
+  LogicalResult cloneInstructionsForAdvancePtr(
+      Block &oldBody, Block &newBody, ArrayRef<PointerArgInfo> pointerArgs,
+      DenseMap<unsigned, unsigned> &indexMap, IRMapping &mapping,
+      PatternRewriter &rewriter) const;
+
+  LogicalResult
+  rewriteLoopBodyForAdvancePtr(scf::ForOp oldForOp, scf::ForOp newForOp,
+                               SmallVector<PointerArgInfo> &pointerArgs,
+                               DenseMap<unsigned, unsigned> &indexMap,
+                               PatternRewriter &rewriter) const;
+
+  LogicalResult cloneYieldOpForAdvancePtr(
+      scf::YieldOp yieldOp, ArrayRef<PointerArgInfo> pointerArgs,
+      DenseMap<unsigned, unsigned> &indexMap, IRMapping &mapping,
+      PatternRewriter &rewriter) const;
+
+  SmallVector<Value>
+  reconstructPointerForAdvance(scf::ForOp forOp, unsigned idx, Value intResult,
+                               ArrayRef<PointerArgInfo> pointerArgs,
+                               PatternRewriter &rewriter) const;
 };
 
+class SimplifyTensorIterArgsPattern : public OpRewritePattern<scf::ForOp> {
+public:
+  explicit SimplifyTensorIterArgsPattern(MLIRContext *context)
+      : OpRewritePattern<scf::ForOp>(context) {}
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  static constexpr llvm::StringLiteral kSimplifiedAttr =
+      "tts.simplify_tensor_iter_args.done";
+  static constexpr llvm::StringLiteral kFailedAttr =
+      "tts.simplify_tensor_iter_args.failed";
+  static constexpr llvm::StringLiteral kIncompleteAttr =
+      "tts.simplify_tensor_iter_args.incomplete";
+  struct ShapeChainInfo {
+    Value base;
+    SmallVector<Operation *> chain; // from base -> iter shape
+    void dump() const;
+  };
+
+  struct RelayMapM1 {
+    unsigned innerIdx;
+    unsigned outerInitIdx;  // from inner.initArg block-arg mapping
+    unsigned outerYieldIdx; // from outer.yield operand position of inner result
+  };
+
+  struct CandidateInfo {
+    unsigned idx;
+    ShapeChainInfo shapeInfo;
+    SmallVector<Operation *> arithOps; // in execution order
+    std::optional<RelayMapM1> relayMap;
+    void dump() const;
+  };
+
+  bool isBlockArgumentFromAnotherForLoop(Value v) const;
+  std::optional<RelayMapM1> getRelayMapM1(scf::ForOp innerFor,
+                                          scf::ForOp outerFor,
+                                          unsigned innerIdx) const;
+  void splitCandidatesByRelay(SmallVector<CandidateInfo> all,
+                              SmallVector<CandidateInfo> &locals,
+                              SmallVector<CandidateInfo> &relays) const;
+
+  Value cloneShapeChain(Location loc, Value base, ArrayRef<Operation *> chain,
+                        PatternRewriter &rewriter) const;
+  Value normalizeInitArgForShapePeel(Value v) const;
+  std::optional<ShapeChainInfo> peelShapeChain(Value v) const;
+  bool isArithWithConst(Operation *op, Value curVal, Value &nextVal,
+                        Value &constVal) const;
+  Value getNewConstLikeOperand(Value cst, Type targetTy,
+                               PatternRewriter &rewriter) const;
+  bool canBuildConstLikeOperand(Value cst, Type targetTy) const;
+  LogicalResult collectReverseLinearYieldPath(
+      Value yielded, Value iterArg,
+      SmallVectorImpl<Operation *> &opsInExecOrder) const;
+
+  bool extractBinaryArithOperands(Operation *op, Value &lhs, Value &rhs) const;
+  Value createSameBinaryArithOp(Operation *oldOp, Location loc, Value lhs,
+                                Value rhs, PatternRewriter &rewriter) const;
+  bool
+  isSafeToRewriteLanesByResultUses(scf::ForOp forOp,
+                                   ArrayRef<CandidateInfo> candidates) const;
+  FailureOr<scf::ForOp> rewriteForWithLocalCandidates(
+      scf::ForOp forOp, ArrayRef<CandidateInfo> candidates,
+      const IRMapping *outerCaptureMap, PatternRewriter &rewriter) const;
+  LogicalResult precheckRelayCandidates(scf::ForOp innerFor,
+                                        ArrayRef<CandidateInfo> relayCandidates,
+                                        scf::ForOp &outerForOut) const;
+  FailureOr<scf::ForOp> rewriteInnerForWithRelayCandidates(
+      scf::ForOp innerFor, ArrayRef<CandidateInfo> relayCandidates,
+      const IRMapping *outerCaptureMap, PatternRewriter &rewriter) const;
+  FailureOr<scf::ForOp> rewriteOuterForWithRelayCandidates(
+      scf::ForOp innerFor, scf::ForOp oldInnerFor, scf::ForOp outerFor,
+      ArrayRef<CandidateInfo> relayCandidates, PatternRewriter &rewriter) const;
+  LogicalResult
+  rewriteForWithRelayCandidates(scf::ForOp newfor, scf::ForOp oldFor,
+                                ArrayRef<CandidateInfo> relayCandidates,
+                                PatternRewriter &rewriter) const;
+};
 } // namespace CannonicalizerConverter
 
 #endif

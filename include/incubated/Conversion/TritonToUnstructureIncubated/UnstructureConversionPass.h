@@ -42,8 +42,8 @@ extern bool forceSimtTemplateFlag;
 namespace mlir {
 namespace triton {
 
-std::unique_ptr<OperationPass<ModuleOp>> createTritonToUnstructureIncubatedPass(
-    const TritonToUnstructureIncubatedOptions &options = {});
+std::unique_ptr<OperationPass<ModuleOp>>
+createTritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options = {});
 
 } // namespace triton
 } // namespace mlir
@@ -122,11 +122,9 @@ private:
 };
 
 class TritonToUnstructureIncubatedPass
-    : public ::impl::TritonToUnstructureIncubatedBase<
-          TritonToUnstructureIncubatedPass> {
+    : public ::impl::TritonToUnstructureIncubatedBase<TritonToUnstructureIncubatedPass> {
 public:
-  explicit TritonToUnstructureIncubatedPass(
-      const TritonToUnstructureIncubatedOptions &options);
+  explicit TritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options);
   void getDependentDialects(DialectRegistry &registry) const override;
 
   void runOnOperation() override;
@@ -143,8 +141,13 @@ private:
   llvm::DenseMap<Value, PtrOffsetInfo> offsetMap;
   llvm::DenseMap<Value, PtrOffsetInfo> offsetMapForLoopArgs;
   llvm::SmallDenseMap<Value, bool> fromTensorArg;
+
+  LogicalResult processIfYieldAddHoistOperations(ModuleOp moduleOp);
 };
 
 } // namespace
+
+void replacePtrArguments(triton::FuncOp funcOp,
+                         llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap);
 
 #endif // TRITON_ADAPTER_UNSTRUCTURECONVERSION_H

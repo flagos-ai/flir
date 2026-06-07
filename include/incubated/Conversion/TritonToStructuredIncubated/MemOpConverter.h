@@ -46,11 +46,9 @@ class LoadConverter : public OpRewritePattern<triton::LoadOp> {
 public:
   explicit LoadConverter(MLIRContext *context,
                          bool optimizeDynamicOffset = false,
-                         bool enableMaskFallbackConversion = false,
-                         bool compileOn91095 = false)
+                         bool enableMaskFallbackConversion = false)
       : OpRewritePattern<triton::LoadOp>(context),
         optimizeDynamicOffset(optimizeDynamicOffset),
-        compileOn91095(compileOn91095),
         enableMaskFallbackConversion(enableMaskFallbackConversion){};
 
   using OpRewritePattern<triton::LoadOp>::OpRewritePattern;
@@ -61,18 +59,15 @@ public:
 private:
   bool optimizeDynamicOffset;
   bool enableMaskFallbackConversion;
-  bool compileOn91095;
 };
 
 class StoreConverter : public OpRewritePattern<triton::StoreOp> {
 public:
   explicit StoreConverter(MLIRContext *context,
                           bool optimizeDynamicOffset = false,
-                          bool enableMaskFallbackConversion = false,
-                          bool compileOn91095 = false)
+                          bool enableMaskFallbackConversion = false)
       : OpRewritePattern<triton::StoreOp>(context),
         optimizeDynamicOffset(optimizeDynamicOffset),
-        compileOn91095(compileOn91095),
         enableMaskFallbackConversion(enableMaskFallbackConversion){};
 
   using OpRewritePattern<triton::StoreOp>::OpRewritePattern;
@@ -95,14 +90,10 @@ public:
 
   bool optimizeDynamicOffset;
 
-  bool compileOn91095 = false;
-
   MemType currentType = MemType::deafaultType;
 
-  MemOpTransformer(MemType memType, bool optimizeDynamicOffset = false,
-                   bool compileOn91095 = false)
-      : currentType(memType), optimizeDynamicOffset(optimizeDynamicOffset),
-        compileOn91095(compileOn91095) {}
+  MemOpTransformer(MemType memType, bool optimizeDynamicOffset = false)
+      : currentType(memType), optimizeDynamicOffset(optimizeDynamicOffset) {}
 
   Value materializeImplicitBroadcast(Value srcTensor, const Location loc,
                                      PatternRewriter &rewriter);
