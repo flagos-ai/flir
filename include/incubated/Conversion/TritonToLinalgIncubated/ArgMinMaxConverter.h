@@ -23,7 +23,7 @@
 #ifndef TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 #define TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 
-#include "ConversionPatterns.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/ConversionPatterns.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
