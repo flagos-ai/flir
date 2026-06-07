@@ -26,6 +26,7 @@
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "incubated/Conversion/TritonToUnstructureIncubated/OffsetAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
+#include "incubated/Conversion/TritonToStructuredIncubated/MemOpConverter.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
