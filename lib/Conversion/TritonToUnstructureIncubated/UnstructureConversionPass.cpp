@@ -668,7 +668,7 @@ TritonToUnstructureIncubatedPass::processIfYieldAddHoistOperations(ModuleOp modu
 }
 
 TritonToUnstructureIncubatedPass::TritonToUnstructureIncubatedPass(
-    const TritonToUnstructureOptions &options)
+    const TritonToUnstructureIncubatedOptions &options)
     : TritonToUnstructureBase(options) {}
 
 void TritonToUnstructureIncubatedPass::runOnOperation() {
@@ -741,7 +741,7 @@ void TritonToUnstructureIncubatedPass::getDependentDialects(
                   triton::TritonDialect, triton::ascend::TritonAscendDialect>();
 }
 
-std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructurePass(
-    const TritonToUnstructureOptions &options) {
+std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructureIncubatedPass(
+    const TritonToUnstructureIncubatedOptions &options) {
   return std::make_unique<TritonToUnstructureIncubatedPass>(options);
 }
