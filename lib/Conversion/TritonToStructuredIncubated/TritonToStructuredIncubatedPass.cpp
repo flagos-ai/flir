@@ -26,15 +26,15 @@
 #include <cstdint>
 #include <optional>
 
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
-#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#endif
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -92,17 +92,37 @@ void TritonToStructuredIncubatedPass::
   // patterns.add<CannonicalizerConverter::CmpConverter>(patterns.getContext());
   patterns.add<CannonicalizerConverter::PromotePointerIterArgsPattern>(
       patterns.getContext());
+  patterns.add<CannonicalizerConverter::SimplifyTensorIterArgsPattern>(
+      patterns.getContext());
+  // Add addptr splat->broadcast hoisting converter
+  patterns.add<CannonicalizerConverter::AddPtrSplatConverter>(
+      patterns.getContext());
+  // Move loads before broadcasts when safe
+  patterns.add<CannonicalizerConverter::LoadBroadcastConverter>(
+      patterns.getContext());
 }
 
 void TritonToStructuredIncubatedPass::populateTritonToStructuredPatterns(
     RewritePatternSet &patterns, bool optimizeDynamicOffset,
-    bool enableMaskFallbackConversion, bool compileOn91095) {
-  patterns.add<MemOpConverter::LoadConverter>(
-      patterns.getContext(), optimizeDynamicOffset,
-      enableMaskFallbackConversion, compileOn91095);
-  patterns.add<MemOpConverter::StoreConverter>(
-      patterns.getContext(), optimizeDynamicOffset,
-      enableMaskFallbackConversion, false);
+    bool enableMaskFallbackConversion) {
+  patterns.add<MemOpConverter::LoadConverter>(patterns.getContext(),
+                                              optimizeDynamicOffset,
+                                              enableMaskFallbackConversion);
+  patterns.add<MemOpConverter::StoreConverter>(patterns.getContext(),
+                                               optimizeDynamicOffset,
+                                               enableMaskFallbackConversion);
+}
+
+LogicalResult
+TritonToStructuredIncubatedPass::processSplatBinaryOperations(ModuleOp moduleOp) {
+  mlir::RewritePatternSet patterns(&getContext());
+  patterns.add<CannonicalizerConverter::SplatCmpConverter>(
+      patterns.getContext());
+  if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
+    moduleOp.emitWarning("Splat binary op processing failed");
+    return failure();
+  }
+  return success();
 }
 
 void TritonToStructuredIncubatedPass::runOnOperation() {
@@ -112,19 +132,23 @@ void TritonToStructuredIncubatedPass::runOnOperation() {
 
   this->populateTritonToStructuredCanonicalizationPatterns(
       canonicalizerPatterns);
-  if (failed(applyPatternsAndFoldGreedily(moduleOp,
-                                          std::move(canonicalizerPatterns)))) {
+  if (failed(
+          applyPatternsGreedily(moduleOp, std::move(canonicalizerPatterns)))) {
     moduleOp.emitWarning("Canonicalize failed");
   }
 
   RewritePatternSet tritonToStructuredPatterns(&getContext());
-  populateTritonToStructuredPatterns(
-      tritonToStructuredPatterns, optimizeDynamicOffset,
-      enableMaskFallbackConversion, compileOn91095);
+  populateTritonToStructuredPatterns(tritonToStructuredPatterns,
+                                     optimizeDynamicOffset,
+                                     enableMaskFallbackConversion);
 
-  if (failed(applyPatternsAndFoldGreedily(
-          moduleOp, std::move(tritonToStructuredPatterns)))) {
+  if (failed(applyPatternsGreedily(moduleOp,
+                                   std::move(tritonToStructuredPatterns)))) {
     LLVM_DEBUG({ moduleOp->emitRemark("PtrAnalysis: rewrite MemOp failed"); });
+  }
+
+  if (failed(processSplatBinaryOperations(moduleOp))) {
+    moduleOp.emitWarning("Splat binary op processing failed");
   }
 
   PassManager pm(&getContext(), moduleOp.getOperationName());
@@ -142,8 +166,7 @@ triton::createTritonToStructuredIncubatedPass() {
 
 std::unique_ptr<OperationPass<ModuleOp>>
 triton::createTritonToStructuredIncubatedPass(bool enableMaskFallbackConversion,
-                                              bool optimizeDynamicOffset,
-                                              bool compileOn91095) {
-  return std::make_unique<TritonToStructuredIncubatedPass>(
-      enableMaskFallbackConversion, optimizeDynamicOffset, compileOn91095);
+                                              bool optimizeDynamicOffset) {
+  return std::make_unique<TritonToStructuredIncubatedPass>(enableMaskFallbackConversion,
+                                                           optimizeDynamicOffset);
 }
