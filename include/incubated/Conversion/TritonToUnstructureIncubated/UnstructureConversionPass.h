@@ -28,7 +28,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/IR/PatternMatch.h"
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #define GEN_PASS_DECL_TRITONTOUNSTRUCTUREINCUBATED
 #include "incubated/Conversion/TritonToUnstructureIncubated/Passes.h.inc"

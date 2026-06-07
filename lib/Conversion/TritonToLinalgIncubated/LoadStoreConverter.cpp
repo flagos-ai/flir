@@ -36,7 +36,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
 
-#include "Utils/Utils.h"
+#include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"

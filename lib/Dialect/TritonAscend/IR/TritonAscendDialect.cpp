@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
@@ -29,16 +29,16 @@ using namespace mlir::triton::ascend;
 void TritonAscendDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
       >();
 }
 
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.cpp.inc"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.cpp.inc"
 #define GET_ATTRDEF_CLASSES
-#include "npu/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOpsAttrDefs.cpp.inc"
 #define GET_OP_CLASSES
-#include "npu/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendOps.cpp.inc"

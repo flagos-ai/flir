@@ -21,7 +21,7 @@
  */
 
 #include "incubated/Conversion/TritonToLinalgIncubated/MarkTensorKindPass.h"
-#include "npu/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
