@@ -65,7 +65,6 @@ public:
                                ConversionPatternRewriter &rewriter);
   LogicalResult parseSplat(triton::SplatOp op, const Location &loc,
                            ConversionPatternRewriter &rewriter);
-
   LogicalResult findSrc(Value operand);
   LogicalResult replaceBroadcastOp(triton::BroadcastOp op,
                                    ConversionPatternRewriter &rewriter);

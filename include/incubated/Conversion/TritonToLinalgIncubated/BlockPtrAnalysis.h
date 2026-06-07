@@ -22,7 +22,9 @@
 
 #ifndef TRITON_ANALYSIS_BLOCKPTRANALYSIS_H
 #define TRITON_ANALYSIS_BLOCKPTRANALYSIS_H
-
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -184,6 +186,11 @@ public:
                  ConversionPatternRewriter &rewriter,
                  const llvm::SmallDenseMap<Value, BlockData> &known);
 
+  static void parseLinalgGenericFromMakeRange(
+      linalg::GenericOp op, BlockData &data, const Location &loc,
+      ConversionPatternRewriter &rewriter,
+      const llvm::SmallDenseMap<Value, BlockData> &known);
+
   static void
   parseExpandDims(triton::ExpandDimsOp op, BlockData &data, const Location &loc,
                   ConversionPatternRewriter &rewriter,
@@ -241,6 +248,11 @@ public:
                           ConversionPatternRewriter &rewriter,
                           const llvm::SmallDenseMap<Value, BlockData> &known);
 
+  static void
+  parseAtomicRmw(triton::AtomicRMWOp op, BlockData &data, const Location &loc,
+                 ConversionPatternRewriter &rewriter,
+                 const llvm::SmallDenseMap<Value, BlockData> &known);
+
   static void parseFill(linalg::FillOp op, BlockData &data, const Location &loc,
                         ConversionPatternRewriter &rewriter,
                         const llvm::SmallDenseMap<Value, BlockData> &known);
@@ -249,6 +261,12 @@ public:
                           const Location &loc,
                           ConversionPatternRewriter &rewriter,
                           const llvm::SmallDenseMap<Value, BlockData> &known);
+
+  static void parseCustomOp(hivm::CustomOp op, BlockData &data,
+                            const Location &loc,
+                            ConversionPatternRewriter &rewriter,
+                            const llvm::SmallDenseMap<Value, BlockData> &known,
+                            unsigned resultIdx);
 
   static void rewriteAddPtr(triton::AddPtrOp op,
                             triton::AddPtrOp::Adaptor &adaptor,
@@ -263,6 +281,11 @@ public:
   static void rewriteAdvanceOp(triton::AdvanceOp op,
                                ConversionPatternRewriter &rewriter,
                                llvm::SmallDenseMap<Value, BlockData> &known);
+
+  static void
+  rewriteCustomOp(hivm::CustomOp op, hivm::CustomOp::Adaptor &adaptor,
+                  ConversionPatternRewriter &rewriter,
+                  const llvm::SmallDenseMap<Value, BlockData> &known);
 
   template <typename T>
   static std::enable_if_t<std::is_same_v<T, scf::YieldOp> ||
@@ -287,7 +310,8 @@ public:
 template <typename OpTy>
 void parseIndirectLoad(OpTy op, BlockData &data, const Location &loc,
                        ConversionPatternRewriter &rewriter,
-                       const llvm::SmallDenseMap<Value, BlockData> &known);
+                       const llvm::SmallDenseMap<Value, BlockData> &known,
+                       unsigned resultIdx = 0);
 
 } // namespace triton
 

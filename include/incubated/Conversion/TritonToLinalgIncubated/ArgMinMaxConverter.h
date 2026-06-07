@@ -23,11 +23,11 @@
 #ifndef TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 #define TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 
+#include "ConversionPatterns.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
-#include "ConversionPatterns.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -36,6 +36,7 @@
 #define DEBUG_TYPE "triton-to-linalg"
 
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/LogicalResult.h"
 
 #include <limits>
 
@@ -136,11 +137,9 @@ class ArgMinMaxBaseConverter : public OpConversionPattern<triton::ReduceOp> {
 public:
   ArgMinMaxBaseConverter(MLIRContext *context) : OpConversionPattern(context) {}
 
-#if LLVM_VERSION_MAJOR < 22
-  LogicalResult match(triton::ReduceOp op) const override final {
-#else
-  LogicalResult matchImpl(triton::ReduceOp op) const {
-#endif
+  LogicalResult
+  matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     if (op.getBody()->getNumArguments() != 4) {
       return failure();
     }
@@ -170,15 +169,6 @@ public:
 
     LLVM_DEBUG(llvm::dbgs() << "Matching: " << *opsIt << "\n");
     auto indexSelectOp = dyn_cast<arith::SelectOp>(*opsIt++);
-    if (indexSelectOp) {
-      if (indexSelectOp.getCondition() != shouldUpdate ||
-          currIndex != indexSelectOp.getTrueValue() ||
-          reduceIndex != indexSelectOp.getFalseValue()) {
-        return failure();
-      }
-    } else {
-      return failure();
-    }
     if (!indexSelectOp || indexSelectOp.getCondition() != shouldUpdate ||
         currIndex != indexSelectOp.getTrueValue() ||
         reduceIndex != indexSelectOp.getFalseValue()) {
@@ -192,22 +182,13 @@ public:
               ArrayRef<Value>{valueSelectOp, indexSelectOp})) {
       return failure();
     }
-    return success();
-  }
 
-#if LLVM_VERSION_MAJOR < 22
-  void rewrite(triton::ReduceOp op, OpAdaptor adaptor,
-               ConversionPatternRewriter &rewriter) const override final {
-#else
-  void rewriteImpl(triton::ReduceOp op, OpAdaptor adaptor,
-                   ConversionPatternRewriter &rewriter) const {
-#endif
+    // Rewrite phase: perform the actual conversion
     auto loc = op.getLoc();
     auto elemTypes = op.getElementTypes();
 
     auto valueType = elemTypes[0];
     // tl.argmin reorder
-    auto block = op.getBody();
     bool isUnsigned = false;
     if (isa<mlir::FloatType>(valueType)) {
       arith::CmpFOp cmpFOp;
@@ -271,8 +252,8 @@ public:
     auto valuesAccBaseVal =
         rewriter.create<arith::ConstantOp>(loc, valueType, valueAttr);
     int indicesInitValue =
-        (reduceWithIndexParams.has_value() &&
-         (*reduceWithIndexParams).tieBreakType == TieBreakType::RIGHT)
+        (llvm::succeeded(reduceWithIndexParams) &&
+         reduceWithIndexParams->tieBreakType == TieBreakType::RIGHT)
             ? -1
             : std::numeric_limits<int32_t>::max();
 
@@ -315,7 +296,8 @@ public:
     // before we rewrite the argmax reduce op, we know it has return value
     // so addReduceWithIndexAttrIfNeeded won't fail
     // but ignoring it will lead to compiling failure
-    if (reduceWithIndexParams.has_value()) {
+    if (llvm::succeeded(reduceWithIndexParams) &&
+        reduceWithIndexParams->tieBreakType != TieBreakType::None) {
       addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
     }
 
@@ -329,18 +311,9 @@ public:
     } else {
       rewriter.replaceOp(op, linalgOp);
     }
-  }
 
-#if LLVM_VERSION_MAJOR >= 22
-  LogicalResult
-  matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (failed(matchImpl(op)))
-      return failure();
-    rewriteImpl(op, adaptor, rewriter);
     return success();
   }
-#endif
 };
 
 class ArgMinConverter : public ArgMinMaxBaseConverter<ArgMinConverter> {
