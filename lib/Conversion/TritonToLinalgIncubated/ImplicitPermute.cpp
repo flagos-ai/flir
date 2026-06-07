@@ -63,10 +63,10 @@
 #include "incubated/Conversion/TritonToStructuredIncubated/MaskAnalysis.h"
 #include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
 
-#include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
+#include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #define DEBUG_TYPE "triton-to-linalg-implicit-permute"
 
@@ -478,9 +478,9 @@ Value MemOpTransformer::createNewMask(Value oldMask, const Location loc,
       return nullptr;
     }
 
-    TritonToStructuredIncubated::dimInfo newInfo(itMask->offset, newShape,
-                                        itMask->dimIndex, itMask->hasBroadCast,
-                                        itMask->currentType, itMask->rhs);
+    TritonToStructuredIncubated::dimInfo newInfo(
+        itMask->offset, newShape, itMask->dimIndex, itMask->hasBroadCast,
+        itMask->currentType, itMask->rhs);
 
     if (!isZero(itPtr->stride)) {
       newMaskInfo.emplace_back(newInfo);

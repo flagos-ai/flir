@@ -113,8 +113,8 @@ void TritonToStructuredIncubatedPass::populateTritonToStructuredPatterns(
                                                enableMaskFallbackConversion);
 }
 
-LogicalResult
-TritonToStructuredIncubatedPass::processSplatBinaryOperations(ModuleOp moduleOp) {
+LogicalResult TritonToStructuredIncubatedPass::processSplatBinaryOperations(
+    ModuleOp moduleOp) {
   mlir::RewritePatternSet patterns(&getContext());
   patterns.add<CannonicalizerConverter::SplatCmpConverter>(
       patterns.getContext());
@@ -167,6 +167,6 @@ triton::createTritonToStructuredIncubatedPass() {
 std::unique_ptr<OperationPass<ModuleOp>>
 triton::createTritonToStructuredIncubatedPass(bool enableMaskFallbackConversion,
                                               bool optimizeDynamicOffset) {
-  return std::make_unique<TritonToStructuredIncubatedPass>(enableMaskFallbackConversion,
-                                                           optimizeDynamicOffset);
+  return std::make_unique<TritonToStructuredIncubatedPass>(
+      enableMaskFallbackConversion, optimizeDynamicOffset);
 }

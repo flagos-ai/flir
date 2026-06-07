@@ -91,10 +91,10 @@ MemRefType expandInterleaveMemRefType(MemRefType originType) {
 // `add constant one` should work on offset of next insert_slice/extract_slic.
 // The new reinterpretcast just wanna describe whole tensor, so new castOffset
 // is just from non-last diemsnion accumulation and remove `add constant one`
-bool checkIsCaseOffsetValid(OpFoldResult originOffset)
-{
+bool checkIsCaseOffsetValid(OpFoldResult originOffset) {
   // If offset is constant int(IndexAttr), the int value could only be 0 or 1
-  // if offset is a value from add constant operation and not from `add constant one` operation, it's invalid.
+  // if offset is a value from add constant operation and not from `add constant
+  // one` operation, it's invalid.
   if (llvm::isa<Attribute>(originOffset)) {
     int64_t intOffset = getConstantIntValue(originOffset).value();
     return intOffset == 0 || intOffset == 1;
@@ -403,7 +403,8 @@ InterleaveStatusOptimization(SmallVector<Operation *> materializeVec) {
       firstReinterpretCastOp.getConstifiedMixedOffset();
   auto secondOriginCastOffset =
       secondReinterpretCastOp.getConstifiedMixedOffset();
-  if (!checkIsCaseOffsetValid(firstOriginCastOffset) || !checkIsCaseOffsetValid(secondOriginCastOffset)) {
+  if (!checkIsCaseOffsetValid(firstOriginCastOffset) ||
+      !checkIsCaseOffsetValid(secondOriginCastOffset)) {
     return failure();
   }
 
@@ -582,7 +583,8 @@ InterleaveStatusWithMaskOptimization(SmallVector<Operation *> materializeVec) {
       firstReinterpretCastOp.getConstifiedMixedOffset();
   auto secondOriginCastOffset =
       secondReinterpretCastOp.getConstifiedMixedOffset();
-  if (!checkIsCaseOffsetValid(firstOriginCastOffset) || !checkIsCaseOffsetValid(secondOriginCastOffset)) {
+  if (!checkIsCaseOffsetValid(firstOriginCastOffset) ||
+      !checkIsCaseOffsetValid(secondOriginCastOffset)) {
     return failure();
   }
 

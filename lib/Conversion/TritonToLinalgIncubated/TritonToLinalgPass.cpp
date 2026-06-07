@@ -21,7 +21,7 @@
  * THE SOFTWARE.
  */
 
-#include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
+#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/ArgMinMaxConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/DescriptorConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/FunctionConverter.h"
@@ -30,11 +30,11 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/LoadStoreConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/MarkTensorKindPass.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonOpConverter.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/TritonToStructuredIncubated/CannonicalizerConverter.h"
 #include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
-#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 
 #if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
@@ -762,8 +762,8 @@ TritonToLinalgIncubatedPass::processPtrBroadcastOperations(ModuleOp moduleOp) {
   return success();
 }
 
-LogicalResult
-TritonToLinalgIncubatedPass::processImplicitPermuteOperations(ModuleOp moduleOp) {
+LogicalResult TritonToLinalgIncubatedPass::processImplicitPermuteOperations(
+    ModuleOp moduleOp) {
   mlir::RewritePatternSet patterns(&getContext());
   patterns.add<ImplicitPermute::LoadConverter>(patterns.getContext());
   patterns.add<ImplicitPermute::StoreConverter>(patterns.getContext());

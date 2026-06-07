@@ -27,8 +27,8 @@
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
-#include "mlir/IR/PatternMatch.h"
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
+#include "mlir/IR/PatternMatch.h"
 
 #define GEN_PASS_DECL_TRITONTOUNSTRUCTUREINCUBATED
 #include "incubated/Conversion/TritonToUnstructureIncubated/Passes.h.inc"
@@ -42,8 +42,8 @@ extern bool forceSimtTemplateFlag;
 namespace mlir {
 namespace triton {
 
-std::unique_ptr<OperationPass<ModuleOp>>
-createTritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options = {});
+std::unique_ptr<OperationPass<ModuleOp>> createTritonToUnstructureIncubatedPass(
+    const TritonToUnstructureIncubatedOptions &options = {});
 
 } // namespace triton
 } // namespace mlir
@@ -122,9 +122,11 @@ private:
 };
 
 class TritonToUnstructureIncubatedPass
-    : public ::impl::TritonToUnstructureIncubatedBase<TritonToUnstructureIncubatedPass> {
+    : public ::impl::TritonToUnstructureIncubatedBase<
+          TritonToUnstructureIncubatedPass> {
 public:
-  explicit TritonToUnstructureIncubatedPass(const TritonToUnstructureIncubatedOptions &options);
+  explicit TritonToUnstructureIncubatedPass(
+      const TritonToUnstructureIncubatedOptions &options);
   void getDependentDialects(DialectRegistry &registry) const override;
 
   void runOnOperation() override;

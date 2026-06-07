@@ -20,8 +20,8 @@
  * THE SOFTWARE.
  */
 
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "incubated/Conversion/TritonToUnstructureIncubated/UnstructureConversionPass.h"
+#include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "llvm/Support/Debug.h"
 

@@ -657,7 +657,8 @@ void TritonToUnstructureIncubatedPass::runParse(MemAccOpTy op) {
 }
 
 LogicalResult
-TritonToUnstructureIncubatedPass::processIfYieldAddHoistOperations(ModuleOp moduleOp) {
+TritonToUnstructureIncubatedPass::processIfYieldAddHoistOperations(
+    ModuleOp moduleOp) {
   mlir::RewritePatternSet patterns(&getContext());
   patterns.add<CannonicalizerConverter::IfYieldAddHoistConverter>(
       patterns.getContext());
@@ -742,7 +743,8 @@ void TritonToUnstructureIncubatedPass::getDependentDialects(
                   triton::TritonDialect, triton::ascend::TritonAscendDialect>();
 }
 
-std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructureIncubatedPass(
+std::unique_ptr<OperationPass<ModuleOp>>
+triton::createTritonToUnstructureIncubatedPass(
     const TritonToUnstructureIncubatedOptions &options) {
   return std::make_unique<TritonToUnstructureIncubatedPass>(options);
 }

@@ -24,9 +24,9 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-#include "incubated/Conversion/TritonToUnstructureIncubated/OffsetAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
 #include "incubated/Conversion/TritonToStructuredIncubated/MemOpConverter.h"
+#include "incubated/Conversion/TritonToUnstructureIncubated/OffsetAnalysis.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
@@ -53,7 +53,8 @@ using namespace mlir;
 using namespace hivm;
 
 // File-scope flags set by DiscreteMaskAccessConversionPass::runOnOperation()
-// before pattern application, so that OpRewritePattern subclasses can read them.
+// before pattern application, so that OpRewritePattern subclasses can read
+// them.
 static bool compileOn91095Flag = false;
 static bool forceSimtTemplateFlag = false;
 static bool enableSyncBlockLockFlag = true;
@@ -77,8 +78,7 @@ LogicalResult isDiscreteMask(Operation *op, Value mask,
 //   broadcast(andi(a, b)) = andi(broadcast(a), broadcast(b))
 // so that inner AND operands nested inside a broadcast are still reachable.
 static void collectAndLeaves(Value mask, SmallVectorImpl<Value> &leaves,
-                             Location loc, PatternRewriter &rewriter)
-{
+                             Location loc, PatternRewriter &rewriter) {
   if (auto andOp = mask.getDefiningOp<arith::AndIOp>()) {
     collectAndLeaves(andOp.getLhs(), leaves, loc, rewriter);
     collectAndLeaves(andOp.getRhs(), leaves, loc, rewriter);
@@ -106,8 +106,8 @@ struct MaskDecomposition {
   // AND of all leaves that MaskState::parse() can analyze as a rectangle mask.
   // nullptr when no such leaves exist.
   Value contMask;
-  // AND of all leaves that MaskState::parse() cannot analyze (discrete/runtime).
-  // nullptr when no such leaves exist.
+  // AND of all leaves that MaskState::parse() cannot analyze
+  // (discrete/runtime). nullptr when no such leaves exist.
   Value discMask;
 };
 
@@ -116,8 +116,7 @@ struct MaskDecomposition {
 // the per-element selection.
 static MaskDecomposition decomposeAndMask(Operation *op, Value mask,
                                           const Location &loc,
-                                          PatternRewriter &rewriter)
-{
+                                          PatternRewriter &rewriter) {
   SmallVector<Value> leaves;
   collectAndLeaves(mask, leaves, loc, rewriter);
 
@@ -138,15 +137,15 @@ static MaskDecomposition decomposeAndMask(Operation *op, Value mask,
 
   Value contMask = nullptr;
   for (Value v : contLeaves)
-    contMask = contMask
-                   ? rewriter.create<arith::AndIOp>(loc, contMask, v).getResult()
-                   : v;
+    contMask =
+        contMask ? rewriter.create<arith::AndIOp>(loc, contMask, v).getResult()
+                 : v;
 
   Value discMask = nullptr;
   for (Value v : discLeaves)
-    discMask = discMask
-                   ? rewriter.create<arith::AndIOp>(loc, discMask, v).getResult()
-                   : v;
+    discMask =
+        discMask ? rewriter.create<arith::AndIOp>(loc, discMask, v).getResult()
+                 : v;
 
   return {contMask, discMask};
 }
@@ -173,10 +172,11 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
       }
 
       auto &info = offsetMap[dst];
-      Value basePtr  = info.getPtr();
+      Value basePtr = info.getPtr();
       Value totalOffset = info.getOffset();
 
-      rewriter.create<triton::ascend::IndirectStoreOp>(loc, basePtr, totalOffset, src, mask);
+      rewriter.create<triton::ascend::IndirectStoreOp>(loc, basePtr,
+                                                       totalOffset, src, mask);
       rewriter.eraseOp(op);
       return success();
     }
@@ -193,8 +193,8 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
       }
       auto safeLoad = rewriter.create<triton::LoadOp>(
           loc, dst, contMask, op.getCache(), op.getEvict(), false);
-      auto selOp = rewriter.create<arith::SelectOp>(
-          loc, discMask, src, safeLoad.getResult());
+      auto selOp = rewriter.create<arith::SelectOp>(loc, discMask, src,
+                                                    safeLoad.getResult());
       auto newStore = rewriter.create<triton::StoreOp>(
           loc, dst, selOp, contMask, op.getCache(), op.getEvict());
       newStore->setAttr(ConverterUtils::discreteMaskAttrName,
@@ -261,10 +261,12 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
       }
       auto safeLoad = rewriter.create<triton::LoadOp>(
           loc, ptr, contMask, op.getCache(), op.getEvict(), op.getIsVolatile());
-      // Use combined mask to select the result, avoid the uninitialized memory access.
-      auto combinedMask = rewriter.create<arith::AndIOp>(loc, contMask, discMask);
-      auto discreteMaskOp =
-          rewriter.create<arith::SelectOp>(loc, combinedMask, safeLoad.getResult(), other);
+      // Use combined mask to select the result, avoid the uninitialized memory
+      // access.
+      auto combinedMask =
+          rewriter.create<arith::AndIOp>(loc, contMask, discMask);
+      auto discreteMaskOp = rewriter.create<arith::SelectOp>(
+          loc, combinedMask, safeLoad.getResult(), other);
       rewriter.replaceOp(op, discreteMaskOp);
       return success();
     }
@@ -287,7 +289,8 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
   }
 };
 
-struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp> {
+struct DiscreteMaskAtomicConversion
+    : OpRewritePattern<mlir::triton::AtomicRMWOp> {
   using OpRewritePattern<mlir::triton::AtomicRMWOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(mlir::triton::AtomicRMWOp op,
@@ -361,7 +364,8 @@ void DiscreteMaskAccessConversionPass::runOnOperation() {
   pm.addPass(createCSEPass());
   pm.addPass(createCanonicalizerPass());
   if (failed(runPipeline(pm, getOperation()))) {
-    moduleOp->emitWarning("DiscreteMaskAccessConversion: dead-code cleanup failed");
+    moduleOp->emitWarning(
+        "DiscreteMaskAccessConversion: dead-code cleanup failed");
   }
 
   LLVM_DEBUG({
@@ -372,9 +376,9 @@ void DiscreteMaskAccessConversionPass::runOnOperation() {
 }
 
 void DiscreteMaskAccessConversionPass::getDependentDialects(
-    DialectRegistry &registry) const
-{
-  registry.insert<arith::ArithDialect, triton::TritonDialect, hivm::HIVMDialect>();
+    DialectRegistry &registry) const {
+  registry
+      .insert<arith::ArithDialect, triton::TritonDialect, hivm::HIVMDialect>();
 }
 
 std::unique_ptr<OperationPass<ModuleOp>>

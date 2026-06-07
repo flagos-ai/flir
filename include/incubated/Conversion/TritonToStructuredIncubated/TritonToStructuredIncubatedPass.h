@@ -34,10 +34,11 @@
 namespace mlir {
 namespace triton {
 
-std::unique_ptr<OperationPass<ModuleOp>> createTritonToStructuredIncubatedPass();
+std::unique_ptr<OperationPass<ModuleOp>>
+createTritonToStructuredIncubatedPass();
 
-std::unique_ptr<OperationPass<ModuleOp>> createTritonToStructuredIncubatedPass(bool,
-                                                                               bool);
+std::unique_ptr<OperationPass<ModuleOp>>
+createTritonToStructuredIncubatedPass(bool, bool);
 
 } // namespace triton
 } // namespace mlir
