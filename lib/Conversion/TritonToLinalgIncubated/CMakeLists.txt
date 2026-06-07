@@ -12,7 +12,9 @@ add_triton_library(TritonToLinalgIncubated
         BlockPtrAnalysis.cpp
         MaskAnalysis.cpp
         UseAnalysis.cpp
+        ImplicitPermute.cpp
         DescriptorConverter.cpp
+        MarkTensorKindPass.cpp
 
   DEPENDS
   TritonToLinalgIncubatedConversionPassIncGen
