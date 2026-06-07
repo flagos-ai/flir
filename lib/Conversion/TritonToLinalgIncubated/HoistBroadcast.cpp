@@ -178,7 +178,6 @@ BroadcastHoister::parseSplat(triton::SplatOp splatOp, const Location &loc,
         { llvm::dbgs() << "SplatOp source must be of pointer type.\n"; });
     return failure();
   }
-  source = src;
 
   auto ptrType = dyn_cast<triton::PointerType>(source.getType());
   auto ptrTensorType = RankedTensorType::get({tensorSizes}, ptrType);
@@ -225,5 +224,4 @@ bool BroadcastHoister::canBroadcast() {
   }
   return source != nullptr && isa<triton::PointerType>(source.getType());
 }
-
 } // namespace HoistBroadcast

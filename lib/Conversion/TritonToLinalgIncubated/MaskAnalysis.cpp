@@ -46,8 +46,8 @@ namespace triton {
 namespace Incubated {
 
 template <typename MemAccOpTy>
-std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op,
-                                                        OpBuilder &builder) {
+std::optional<MaskState> runMaskAnalysisImpl(MemAccOpTy op,
+                                             OpBuilder &builder) {
   auto mask = op.getMask();
   if (!mask) {
     return std::nullopt;
@@ -56,11 +56,24 @@ std::optional<Incubated::MaskState> runMaskAnalysisImpl(MemAccOpTy op,
   PatternRewriter::InsertionGuard insertGuard(builder);
   builder.setInsertionPoint(op);
 
-  Incubated::MaskState mstate;
+  MaskState mstate;
   if (mstate.parse(mask, op.getLoc(), builder).failed()) {
     return std::nullopt;
   }
   return mstate;
+}
+
+OpFoldResult MaskState::clampToNonNegativeIndex(const OpFoldResult value,
+                                                const Location &loc,
+                                                OpBuilder &builder) const {
+  if (auto cst = getConstantIntValue(value)) {
+    return builder.getIndexAttr(std::max<int64_t>(0, *cst));
+  }
+
+  // For non-constant value, we could generate max(value, 0) to ensure the value
+  // is non-negative. But this caused error in atomic max/min ut test. We need
+  // to investigate more on this.
+  return value;
 }
 
 LogicalResult MaskState::parse(Value operand, const Location &loc,
@@ -111,6 +124,8 @@ LogicalResult MaskState::parse(Value operand, const Location &loc,
           [&](auto op) { return this->parseDiv(op, loc, builder); })
       .Case<arith::SelectOp>(
           [&](auto op) { return this->parseSel(op, loc, builder); })
+      .Case<tensor::InsertOp>(
+          [&](auto op) { return this->parseInsert(op, loc, builder); })
       .Default([&](Operation *op) { return failure(); });
 }
 
@@ -127,6 +142,19 @@ tensor::ExtractSliceOp MaskState::getExtractSlice(Value source,
                                                 dims, strides);
 }
 
+tensor::ExtractSliceOp MaskState::getExtractSlice(
+    Value source, const Location &loc, OpBuilder &builder,
+    SmallVector<OpFoldResult> offsets, SmallVector<OpFoldResult> dims) const {
+  auto sourceRType = cast<RankedTensorType>(source.getType());
+  SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
+
+  auto dstRType = tensor::ExtractSliceOp::inferResultType(sourceRType, offsets,
+                                                          dims, strides);
+  return builder.create<tensor::ExtractSliceOp>(loc, dstRType, source, offsets,
+                                                dims, strides);
+}
+
+// insertSlice
 tensor::InsertSliceOp MaskState::getInsertSlice(Value source, Value dest,
                                                 const Location &loc,
                                                 OpBuilder &builder) const {
@@ -135,14 +163,76 @@ tensor::InsertSliceOp MaskState::getInsertSlice(Value source, Value dest,
                                                strides);
 }
 
+tensor::InsertSliceOp
+MaskState::getInsertSlice(Value source, Value dest, const Location &loc,
+                          OpBuilder &builder, SmallVector<OpFoldResult> offsets,
+                          SmallVector<OpFoldResult> dims) const {
+  SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
+  return builder.create<tensor::InsertSliceOp>(loc, source, dest, offsets, dims,
+                                               strides);
+}
+
 memref::SubViewOp MaskState::getSubview(Value source, const Location &loc,
                                         OpBuilder &builder) const {
   auto sourceType = cast<MemRefType>(source.getType());
-  SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
-  auto dstType =
-      memref::SubViewOp::inferResultType(sourceType, offsets, dims, strides);
-  return builder.create<memref::SubViewOp>(loc, cast<MemRefType>(dstType),
-                                           source, offsets, dims, strides);
+  int64_t rank = sourceType.getRank();
+  SmallVector<OpFoldResult> strides(rank, builder.getIndexAttr(1));
+
+  SmallVector<OpFoldResult> fixedOffsets(offsets.begin(), offsets.end());
+  SmallVector<OpFoldResult> fixedDims(dims.begin(), dims.end());
+  fixedOffsets.resize(rank, builder.getIndexAttr(0));
+  fixedDims.resize(rank, builder.getIndexAttr(1));
+
+  auto dstType = memref::SubViewOp::inferResultType(sourceType, fixedOffsets,
+                                                    fixedDims, strides);
+  return builder.create<memref::SubViewOp>(
+      loc, cast<MemRefType>(dstType), source, fixedOffsets, fixedDims, strides);
+}
+
+// In llvm later version, for each dimension, assert that:
+// 0 <= offset < dim_size
+// 0 <= offset + (size - 1) *stride < dim_size
+// To adatpt to this change, add this verification to avoid llvm assert error
+// And currently, in the function calling scenario, the stride coefficient is
+// always 1
+bool MaskState::isMemrefSubviewValid(Value source, OpBuilder &builder) const {
+  auto sourceType = cast<MemRefType>(source.getType());
+  int64_t rank = sourceType.getRank();
+
+  SmallVector<OpFoldResult> fixedOffsets(offsets.begin(), offsets.end());
+  SmallVector<OpFoldResult> fixedDims(dims.begin(), dims.end());
+  fixedOffsets.resize(rank, builder.getIndexAttr(0));
+  fixedDims.resize(rank, builder.getIndexAttr(1));
+
+  for (int64_t i = 0; i < rank; ++i) {
+    int64_t sourceSize = sourceType.getDimSize(i);
+    if (ShapedType::isDynamic(sourceSize))
+      continue;
+    std::optional<int64_t> offsetVal =
+        mlir::getConstantIntValue(fixedOffsets[i]);
+    std::optional<int64_t> dimVal = mlir::getConstantIntValue(fixedDims[i]);
+    if (offsetVal.has_value() && dimVal.has_value()) {
+      if (offsetVal.value() >= sourceSize || offsetVal.value() < 0) {
+        LLVM_DEBUG({
+          llvm::dbgs() << "MemrefSubview offset check faied at dim " << i
+                       << "sourceSize :" << sourceSize
+                       << "offsetVal :" << offsetVal << "\n";
+        });
+        return false;
+      }
+
+      int64_t computedEnd = offsetVal.value() + dimVal.value();
+      if (computedEnd > sourceSize) {
+        LLVM_DEBUG({
+          llvm::dbgs() << "MemrefSubview offset end check faied at dim " << i
+                       << "dimVal :" << dimVal << "offsetVal :" << offsetVal
+                       << "\n";
+        });
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 static memref::SubViewOp createSubview(Value src, const Location &loc,
@@ -165,6 +255,14 @@ LogicalResult MaskState::addStateScalar(const MaskState &state,
   end = addOpFoldResult(state.end, scalar, loc, builder);
   dims = state.dims;
   offsets = state.offsets;
+
+  bool allDimsOne = llvm::all_of(state.dims, [](OpFoldResult dim) {
+    return getConstantIntValue(dim).value() == std::optional<int64_t>(1);
+  });
+  if (allDimsOne) {
+    this->scalar = this->start;
+  }
+
   return success();
 }
 
@@ -245,9 +343,10 @@ LogicalResult MaskState::minStates(const MaskState &lhsState,
     auto rhsEnd = addOpFoldResult(rhsOffset, rhsDim, loc, builder);
     auto newEnd = minOpFoldResult(lhsEnd, rhsEnd, loc, builder);
     auto newDim = subOpFoldResult(newEnd, newOffset, loc, builder);
+    auto clampedNewDim = clampToNonNegativeIndex(newDim, loc, builder);
 
     offsets.push_back(newOffset);
-    dims.push_back(newDim);
+    dims.push_back(clampedNewDim);
   }
   return success();
 }
@@ -370,8 +469,8 @@ LogicalResult MaskState::parseSel(arith::SelectOp selOp, const Location &loc,
     return failure();
   }
 
-  auto trueScalar = dyn_cast<IntegerAttr>(trueState.scalar.get<Attribute>());
-  auto falseScalar = dyn_cast<IntegerAttr>(falseState.scalar.get<Attribute>());
+  auto trueScalar = dyn_cast<IntegerAttr>(cast<Attribute>(trueState.scalar));
+  auto falseScalar = dyn_cast<IntegerAttr>(cast<Attribute>(falseState.scalar));
 
   if (trueScalar && falseScalar) {
     if (trueScalar.getInt() == 1 && falseScalar.getInt() == 0) {
@@ -452,8 +551,9 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
         maxOpFoldResult(lhsState.start, rhsState.scalar, loc, builder);
     auto newEnd = minOpFoldResult(lhsState.end, realBound, loc, builder);
     auto newDim = subOpFoldResult(newEnd, lhsState.start, loc, builder);
+    auto clampedNewDim = clampToNonNegativeIndex(newDim, loc, builder);
 
-    this->dims[cmpDim] = newDim;
+    this->dims[cmpDim] = clampedNewDim;
     break;
   }
   case arith::CmpIPredicate::sle: {
@@ -463,8 +563,9 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
     auto realBound = maxOpFoldResult(lhsState.start, rhsPlusOne, loc, builder);
     auto newEnd = minOpFoldResult(lhsState.end, realBound, loc, builder);
     auto newDim = subOpFoldResult(newEnd, lhsState.start, loc, builder);
+    auto clampedNewDim = clampToNonNegativeIndex(newDim, loc, builder);
 
-    this->dims[cmpDim] = newDim;
+    this->dims[cmpDim] = clampedNewDim;
     break;
   }
   case arith::CmpIPredicate::sge: {
@@ -473,9 +574,10 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
     auto newStart = minOpFoldResult(lhsState.end, realBound, loc, builder);
     auto newOffset = subOpFoldResult(newStart, lhsState.start, loc, builder);
     auto newDim = subOpFoldResult(lhsState.end, newStart, loc, builder);
+    auto clampedNewDim = clampToNonNegativeIndex(newDim, loc, builder);
 
     this->offsets[cmpDim] = newOffset;
-    this->dims[cmpDim] = newDim;
+    this->dims[cmpDim] = clampedNewDim;
     break;
   }
   case arith::CmpIPredicate::eq: {
@@ -489,7 +591,7 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
   }
   case arith::CmpIPredicate::ne: {
     // only support lhs != 0
-    auto rhsScalar = dyn_cast<IntegerAttr>(rhsState.scalar.get<Attribute>());
+    auto rhsScalar = dyn_cast<IntegerAttr>(cast<Attribute>(rhsState.scalar));
     if (!rhsScalar || rhsScalar.getInt() != 0) {
       return failure();
     }
@@ -627,31 +729,63 @@ LogicalResult MaskState::parseExpandDims(triton::ExpandDimsOp expandDimsOp,
   return success();
 }
 
+LogicalResult MaskState::parseInsert(tensor::InsertOp insertOp,
+                                     const Location &loc, OpBuilder &builder) {
+  if (auto tensorType = dyn_cast<RankedTensorType>(insertOp.getType())) {
+    if (llvm::all_of(tensorType.getShape(),
+                     [](int64_t dim) { return dim == 1; })) {
+      SmallVector<Value> indices(
+          tensorType.getRank(), builder.create<arith::ConstantIndexOp>(loc, 0));
+      auto scalarlizeTensor =
+          builder.create<tensor::ExtractOp>(loc, insertOp, indices).getResult();
+      this->offsets = SmallVector<OpFoldResult>(tensorType.getRank(),
+                                                builder.getIndexAttr(0));
+      this->dims = SmallVector<OpFoldResult>(tensorType.getRank(),
+                                             builder.getIndexAttr(1));
+      this->scalar = getOpFoldResultOfLayoutInfo(scalarlizeTensor, builder);
+      return success();
+    }
+  }
+  return failure();
+}
+
 void MaskState::eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter) {
   auto moduleOp = rawOp->getParentOfType<ModuleOp>();
   SmallVector<Operation *> worklist;
   moduleOp->walk([&](Operation *op) {
-    if (isOpTriviallyDead(op))
+    if (isOpTriviallyDead(op) && op->use_empty()) {
       worklist.push_back(op);
+    }
   });
   while (!worklist.empty()) {
     Operation *op = worklist.pop_back_val();
-    if (!isOpTriviallyDead(op))
+    if (!isOpTriviallyDead(op) || !op->use_empty()) {
       continue;
+    }
+    if (!op->getBlock()) {
+      continue;
+    }
+    SmallVector<Operation *> operandDefOps;
     for (Value value : op->getOperands()) {
-      if (auto defOp = value.getDefiningOp())
-        worklist.push_back(defOp);
+      if (auto defOp = value.getDefiningOp()) {
+        if (defOp->getBlock()) {
+          operandDefOps.push_back(defOp);
+        }
+      }
     }
     LLVM_DEBUG({
       llvm::dbgs() << "[MaskState]==> inserted op: \n"
                    << *op << "\n[MaskState]<== is removed\n";
     });
+
     rewriter.eraseOp(op);
+    for (auto defOp : operandDefOps) {
+      worklist.push_back(defOp);
+    }
   }
 }
 
-std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op,
-                                                    OpBuilder &builder) {
+std::optional<MaskState> runMaskAnalysis(Operation *op, OpBuilder &builder) {
   if (auto loadOp = dyn_cast<triton::LoadOp>(op)) {
     return runMaskAnalysisImpl(loadOp, builder);
   }

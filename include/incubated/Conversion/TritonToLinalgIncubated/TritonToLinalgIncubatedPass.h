@@ -48,15 +48,12 @@ createTritonToLinalgIncubatedPass(bool, bool, bool, bool, bool);
 } // namespace Incubated
 } // namespace triton
 } // namespace mlir
-enum TensorKind { NONE = -1, INPUT = 0, OUTPUT = 1, INPUT_OUTPUT = 2 };
 
 using namespace mlir;
 using namespace triton;
 const std::string globalKernelAttr = "global_kernel";
 const std::string kernelMixModeName = "mix_mode";
 const std::string kernelParallelModeName = "parallel_mode";
-const unsigned INT_BIT_WIDTH = 32;
-const unsigned SET_INIT_SIZE = 16;
 
 class TritonTypeConverter : public mlir::TypeConverter {
 public:
@@ -75,15 +72,6 @@ private:
   // remember 'xxxOp' is usually a Pointer, so that we can change target memory
   // without giving a reference argument
   void addProgramInfo(triton::FuncOp func, bool globalKernel);
-
-  template <typename OpTy>
-  void addTensorKindToArguments(OpTy op, triton::FuncOp func,
-                                TensorKind tensorKind);
-
-  template <TensorKind Kind, typename... Ops>
-  void walkAndMarkTensorKind(triton::FuncOp func);
-
-  void annotateTensorKindForModule(ModuleOp moduleOp);
 
   void convertTTFunc(triton::FuncOp func, const bool existDot,
                      const bool existSIMTOp);
@@ -105,6 +93,8 @@ private:
 
   LogicalResult processDescriptorOperations(ModuleOp moduleOp);
   LogicalResult processPtrBroadcastOperations(ModuleOp moduleOp);
+  LogicalResult processImplicitPermuteOperations(ModuleOp moduleOp);
+  LogicalResult processLegalStrideOperations(ModuleOp moduleOp);
 
 public:
   TritonToLinalgIncubatedPass() = default;
@@ -118,6 +108,7 @@ public:
     this->enableSelectAnalysis = enableSelectAnalysis;
     this->compileOn91095 = compileOn91095;
   };
+
   void getDependentDialects(DialectRegistry &registry) const override;
 
   void runOnOperation() override;

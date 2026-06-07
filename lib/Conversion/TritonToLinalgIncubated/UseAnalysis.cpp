@@ -23,8 +23,8 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 
-#ifdef __TLE_STRUCT__
-#include "tle/dsa/dialect/include/IR/Dialect.h"
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -55,7 +55,7 @@ std::string stringifyUseType(UseType useTy) {
 }
 
 #if LLVM_VERSION_MAJOR >= 20
-LogicalResult mlir::triton::Incubated::UseAnalysis::visitOperation(
+LogicalResult triton::Incubated::UseAnalysis::visitOperation(
     Operation *op, ArrayRef<UseInfo *> operands,
     ArrayRef<const UseInfo *> results) {
 #else
@@ -113,7 +113,7 @@ void triton::UseAnalysis::visitOperation(Operation *op,
       })
       // Consider triton::AtomicRMWOp as store operation
       .Case<triton::AtomicRMWOp>([&](auto atomicOp) {
-        propagateUse(operands[0], UseType::MetaUse);
+        propagateUse(operands[0], UseType::MixUse);
         propagateUse(operands[1], UseType::DataUse);
         auto value = atomicOp.getVal();
         auto mask = atomicOp.getMask();
@@ -151,6 +151,15 @@ void triton::UseAnalysis::visitOperation(Operation *op,
           propagateResults(getLatticeElement(init), {result});
         }
       })
+      .Case<triton::ReduceOp>([&](auto reduceOp) {
+        for (auto operand : operands) {
+          propagateUse(operand, UseType::DataUse);
+        }
+      })
+      .Case<hivm::FixpipeOp>(
+          [&](auto fixpipeOp) { propagateUse(operands[0], UseType::DataUse); })
+      .Case<hivm::CopyOp>(
+          [&](auto copyOp) { propagateUse(operands[0], UseType::DataUse); })
       .Default([&](Operation *op) {
         // this condition account for tt.addptr
         for (auto operand : operands) {
@@ -184,6 +193,34 @@ void setMixUseRecursively(Operation *rootOp, bool applyRoot = true) {
         LLVM_DEBUG({ op->setAttr("MixUse", UnitAttr::get(b.getContext())); });
         op->removeAttr("MetaUse");
       });
+}
+
+static void setMixUseFromValue(Value v) {
+  if (auto *defOp = v.getDefiningOp()) {
+    setMixUseRecursively(defOp);
+    return;
+  }
+
+  auto blockArg = dyn_cast<BlockArgument>(v);
+  if (!blockArg) {
+    return;
+  }
+
+  auto *parentOp = blockArg.getOwner()->getParentOp();
+  auto loopLikeOp = dyn_cast_or_null<LoopLikeOpInterface>(parentOp);
+  if (!loopLikeOp) {
+    return;
+  }
+
+  if (OpOperand *init = loopLikeOp.getTiedLoopInit(blockArg)) {
+    if (auto *initDefOp = init->get().getDefiningOp())
+      setMixUseRecursively(initDefOp);
+  }
+
+  if (OpOperand *yielded = loopLikeOp.getTiedLoopYieldedValue(blockArg)) {
+    if (auto *yieldDefOp = yielded->get().getDefiningOp())
+      setMixUseRecursively(yieldDefOp);
+  }
 }
 
 std::optional<bool> isIterArgMixUse(Value v, Value target,
@@ -244,7 +281,7 @@ void postProcessLoopOp(LoopLikeOpInterface loopOp,
   }
 }
 
-LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
+LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
   MLIRContext *context = funcOp.getContext();
   SymbolTableCollection symbolTable;
 
@@ -285,6 +322,15 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
       LLVM_DEBUG({ op->setAttr("Undefined", UnitAttr::get(context)); });
       return;
     } else if (useType == UseType::MetaUse) {
+      auto memEffect = dyn_cast<MemoryEffectOpInterface>(op);
+      if (memEffect) {
+        if (isa<triton::AtomicRMWOp, triton::AtomicCASOp>(op)) {
+          LLVM_DEBUG(
+              { os << "force protecting side-effect op:" << *op << "\n"; });
+          op->setAttr("DataUse", UnitAttr::get(context));
+          return;
+        }
+      }
       if (!isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
                triton::ReduceOp>(op)) {
         assert(op->getNumResults() == 1 &&
@@ -313,11 +359,11 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
     bool shapedResult = true;
     for (auto result : op->getResults())
       shapedResult &= isa<ShapedType>(result.getType());
-    if (!shapedResult || isa<LoopLikeOpInterface, scf::IfOp>(op)) {
+    if (!shapedResult ||
+        isa<LoopLikeOpInterface, scf::IfOp, arith::SelectOp>(op)) {
       LLVM_DEBUG({ op->setAttr("MixUse", UnitAttr::get(context)); });
       return;
     }
-
     llvm::SetVector<Operation *> metaUsers;
     for (auto result : op->getResults()) {
       for (auto user : result.getUsers()) {
@@ -394,6 +440,9 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
     if (isa<LoopLikeOpInterface, scf::IfOp>(op))
       return;
 
+    if (isa<triton::LoadOp>(op))
+      return;
+
     // Clone the operation; switch all meta users to use the clone
     OpBuilder builder(op);
     auto clone = builder.clone(*op);
@@ -440,15 +489,15 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
           [op](Operation *curOp) { return isMetaUse(curOp) && curOp != op; },
           /*stopFn*/
           [&](Operation *curOp) {
-            // triton::LoadOp or triton::StoreOp without MetaUse means
-            // it is an indirect load or store
-            // instead of the load providing the offset.
-            // The pattern is as follows,
-            // load -> ops -> load
-            // load -> ops -> store
-            // We need to ensure the intermediate ops are marked MixUse
-            // so that they will be replaced instead of be erased without
-            // conversion.
+      // triton::LoadOp or triton::StoreOp without MetaUse means
+      // it is an indirect load or store
+      // instead of the load providing the offset.
+      // The pattern is as follows,
+      // load -> ops -> load
+      // load -> ops -> store
+      // We need to ensure the intermediate ops are marked MixUse
+      // so that they will be replaced instead of be erased without
+      // conversion.
 #ifdef __TLE_STRUCT__
             return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
                     isa<triton::ascend::IndirectStoreOp>(curOp) ||
@@ -461,11 +510,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
 #endif
           },
           /*actionFn*/
-          [](OpBuilder &b, Operation *op) {
-            LLVM_DEBUG(
-                { op->setAttr("MixUse", UnitAttr::get(b.getContext())); });
-            op->removeAttr("MetaUse");
-          },
+          [](OpBuilder &b, Operation *op) { setMixUseRecursively(op); },
           stopOps);
       LLVM_DEBUG({
         os << "[UseAnalysis] stopOps are \n";
@@ -494,8 +539,7 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
       if (!ifOp.getElseRegion().empty())
         yields.append(llvm::to_vector(ifOp.elseYield().getOperands()));
       for (auto yield : yields) {
-        if (auto *defOp = yield.getDefiningOp())
-          setMixUseRecursively(defOp);
+        setMixUseFromValue(yield);
       }
     } else if (auto atomicRmwOp = dyn_cast<triton::AtomicRMWOp>(op)) {
       auto mask = atomicRmwOp.getMask();
@@ -506,6 +550,12 @@ LogicalResult mlir::triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
   // Remove MetaUse in case of MixUse existing in the op
   funcOp.walk([&](Operation *op) {
     if (isMetaUse(op) && isMixUse(op)) {
+      op->removeAttr("MetaUse");
+    }
+  });
+  // hivm.custom present library call, shouldn't be metause
+  funcOp.walk([&](hivm::CustomOp op) {
+    if (isMetaUse(op)) {
       op->removeAttr("MetaUse");
     }
   });

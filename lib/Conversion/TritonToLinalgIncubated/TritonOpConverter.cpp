@@ -34,6 +34,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <cstdlib>
 #include <utility>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -42,19 +44,100 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 #if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif
 #if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #endif
+#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#endif
 
 namespace TTOpConverters {
 using namespace mlir;
 using namespace triton;
+using namespace Incubated;
+
+static const llvm::SmallVector<llvm::StringRef> libdeviceOps = {
+    // Basic operations
+    "__hmf_pow_fp32",
+    "__hmf_div_rz_fp32",
+    "__hmf_fmod_fp32",
+    "__hmf_float_as_int_fp32",
+    "__hmf_trunc_fp32",
+    "__hmf_trunc_fp16",
+    "__hmf_nearbyint_fp32",
+    "__hmf_signbit_fp32",
+    "__hmf_signbit_fp16",
+    "__hmf_copysign_fp32",
+    "__hmf_log10_fp32",
+    // Trigonometric operations
+    "__hmf_tanh_fp32",
+    "__hmf_asin_fp32",
+    "__hmf_asin_fp16",
+    "__hmf_acos_fp32",
+    "__hmf_acos_fp16",
+    "__hmf_atan2_fp32",
+    "__hmf_atan2_fp16",
+    "__hmf_sinh_fp32",
+    "__hmf_sinh_fp16",
+    "__hmf_cosh_fp32",
+    "__hmf_cosh_fp16",
+    "__hmf_asinh_fp32",
+    "__hmf_asinh_fp16",
+    "__hmf_acosh_fp32",
+    "__hmf_acosh_fp16",
+    "__hmf_atanh_fp32",
+    "__hmf_atanh_fp16",
+    // Other operations
+    "__hmf_expm1_fp32",
+    "__hmf_expm1_fp16",
+    "__hmf_nextafter_fp32",
+    "__hmf_nextafter_fp16",
+    "__hmf_hypot_fp32",
+    "__hmf_hypot_fp16",
+    "__hmf_cyl_bessel_i0_fp32",
+    "__hmf_cyl_bessel_i0_fp16",
+    "__hmf_erfinv_fp32",
+    "__hmf_lgamma_fp32",
+};
+
+/**
+ * Retrieves a boolean environment variable.
+ * @param envVar The name of the environment variable.
+ * @param defaultValue The default value to return if the variable is not set or
+ * cannot be parsed.
+ * @return true if the environment variable exists and its value is parsed as
+ * "true", otherwise returns defaultValue. Parsing rules (case-insensitive):
+ * "true" values: any non-empty string not equal to "0", "false", "no", "off" is
+ * considered true. "false" values: an empty string or a string equal to any of
+ * the false literals is considered false.
+ */
+bool getEnvBool(const char *envVar, bool defaultValue) {
+  const char *val = std::getenv(envVar);
+  if (val == nullptr) {
+    return defaultValue; // variable not set
+  }
+
+  std::string s(val);
+  // Convert to lowercase for easier comparison
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  // Common false literals
+  if (s.empty() || s == "0" || s == "false" || s == "no" || s == "off") {
+    return false;
+  }
+  // All other cases (including "1", "true", "yes", "on", etc.) are considered
+  // true
+  return true;
+}
 
 static llvm::SmallString<kFuncNameCap>
 generateUniqueFuncName(ModuleOp moduleOp, llvm::StringRef funcNameBase) {
@@ -163,12 +246,18 @@ SelectCanonicalizer::matchAndRewrite(arith::SelectOp op,
                                      PatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
-  // 0. Shortcut for scalars
+  // 0. Shortcut for scalars and bool type
   auto type = dyn_cast<TensorType>(op.getResult().getType());
   if (!type) {
     // do nothing non-tensor select
     return failure();
   }
+  auto elementType = type.getElementType();
+  if (elementType.isInteger(1)) {
+    // do nothing with bool type
+    return failure();
+  }
+  auto tensorShape = type.getShape();
   auto mask = op.getCondition();
   if (!isa<ShapedType>(mask.getType())) {
     // do nothing for scalar mask
@@ -187,67 +276,130 @@ SelectCanonicalizer::matchAndRewrite(arith::SelectOp op,
         op, "Cannot lower continuous masked selects");
   }
 
-  // 2. Slice out the masked part of true tensor
-  auto trueTensor = op.getTrueValue();
-  auto extractSliceOp = mstate.getExtractSlice(trueTensor, loc, rewriter);
+  // 2. Get mask position
+  MaskPosition maskPos = mstate.getMaskPosition(tensorShape);
+  LLVM_DEBUG({
+    llvm::dbgs() << "[SelectAnalysis] MaskPosition detected: "
+                 << (maskPos == MaskPosition::Head     ? "Head"
+                     : maskPos == MaskPosition::Tail   ? "Tail"
+                     : maskPos == MaskPosition::Middle ? "Middle"
+                                                       : "Unknown")
+                 << "\n";
+  });
 
-  // 3. Insert out the sliced true tensor into false tensor
-  auto falseTensor = op.getFalseValue();
-  auto insertSliceOp =
-      mstate.getInsertSlice(extractSliceOp, falseTensor, loc, rewriter);
-
-  // 4. Fix if the offset is negative at runtime
-  rewriter.setInsertionPointAfter(insertSliceOp);
-  Value zeroIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  auto offsets = mstate.offsets;
-  SmallVector<Value> isInvalidVals;
-  for (size_t i = 0; i < offsets.size(); i++) {
-    auto &o = offsets[i];
-    if (o.is<Value>()) {
-      auto oVal = o.get<Value>();
-      int64_t dimSize = type.getShape()[i];
-      Value sizeIndex = rewriter.create<arith::ConstantIndexOp>(loc, dimSize);
-      Value isNegative = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::slt, oVal, zeroIndex);
-      Value isOutOfRange = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::sge, oVal, sizeIndex);
-      isInvalidVals.push_back(isNegative);
-      isInvalidVals.push_back(isOutOfRange);
-    }
+  if (maskPos == MaskPosition::Unknown) {
+    mstate.eraseInsertedOps(op, rewriter);
+    return failure();
   }
+  auto trueTensor = op.getTrueValue();
+  auto falseTensor = op.getFalseValue();
 
-  if (isInvalidVals.empty()) {
+  // 3. Slice and insert out the masked part
+  if (maskPos == MaskPosition::Head) {
+    // Slice out the masked part of true tensor
+    auto extractSliceOp = mstate.getExtractSlice(trueTensor, loc, rewriter);
+
+    // Insert out the sliced true tensor into false tensor
+    auto insertSliceOp =
+        mstate.getInsertSlice(extractSliceOp, falseTensor, loc, rewriter);
+
+    LLVM_DEBUG({
+      llvm::dbgs() << "  -> Created ExtractSlice: "
+                   << *extractSliceOp.getOperation() << "\n"
+                   << "  -> Created InsertSlice: "
+                   << *insertSliceOp.getOperation() << "\n";
+    });
     rewriter.replaceOp(op, insertSliceOp);
     return success();
   }
-  // At least one value
-  Value invalidVal = isInvalidVals[0];
-  if (isInvalidVals.size() > 1) {
-    for (int i = 1; i < isInvalidVals.size(); ++i) {
-      auto tmpOrOp =
-          rewriter.create<arith::OrIOp>(loc, isInvalidVals[i], invalidVal);
-      invalidVal = tmpOrOp.getResult();
+
+  // For Tail or Middle positions, we need to compute inverted dimensions
+  // to handle the masking logic
+  SmallVector<OpFoldResult> invertOffsets;
+  SmallVector<OpFoldResult> invertFalseDims;
+  SmallVector<OpFoldResult> invertTrueDims;
+  OpFoldResult falseDimOp;
+  OpFoldResult trueDimOp;
+  int valDim = -1;
+  for (int i = 0; i < mstate.getRank(); ++i) {
+    const auto &offVal = mstate.offsets[i];
+    const auto &dimVal = mstate.dims[i];
+    auto constOffVal = getConstantIntValue(offVal);
+    invertOffsets.push_back(rewriter.getIndexAttr(0));
+    if (constOffVal.has_value() && constOffVal.value() == 0) {
+      invertFalseDims.push_back(dimVal);
+      invertTrueDims.push_back(dimVal);
+    } else {
+      assert(valDim == -1 &&
+             "The offset in only one dimension can be not zero.");
+      if (!constOffVal.has_value()) {
+        valDim = i;
+        falseDimOp = offVal;
+      }
+
+      invertFalseDims.push_back(offVal);
+      trueDimOp = addOpFoldResult(offVal, dimVal, loc, rewriter);
+      invertTrueDims.push_back(trueDimOp);
     }
   }
-  // else: what if the number of negative value checks is > 1?
-  auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{falseTensor.getType()},
-                                         invalidVal, true /* addThenBlock */,
-                                         true /* addElseBlock */);
-  // thenBuilder
-  rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
-  rewriter.create<scf::YieldOp>(loc, ValueRange{falseTensor});
-  // elseBuilder
-  Block *elseBlock = &ifOp.getElseRegion().front();
-  extractSliceOp->moveBefore(elseBlock, elseBlock->begin());
-  insertSliceOp->moveBefore(elseBlock, elseBlock->end());
-  rewriter.setInsertionPointToStart(elseBlock);
-  {
+
+  // Slice out the invert first masked part of false tensor
+  auto falseExtractSliceOp = mstate.getExtractSlice(
+      falseTensor, loc, rewriter, invertOffsets, invertFalseDims);
+  // Insert out the sliced false tensor into true tensor
+  auto trueInsertSliceOp =
+      mstate.getInsertSlice(falseExtractSliceOp, trueTensor, loc, rewriter,
+                            invertOffsets, invertFalseDims);
+  // Slice out the invert first masked and masked part of inserted true tensor
+  auto extractSliceOp = mstate.getExtractSlice(trueInsertSliceOp, loc, rewriter,
+                                               invertOffsets, invertTrueDims);
+  // Insert out the sliced true tensor into false tensor
+  auto insertSliceOp =
+      mstate.getInsertSlice(extractSliceOp, falseTensor, loc, rewriter,
+                            invertOffsets, invertTrueDims);
+  if (valDim != -1) {
+    rewriter.setInsertionPointAfter(trueInsertSliceOp);
+    assert(isa<Value>(falseDimOp) &&
+           "Expected to be a runtime Value for dynamic dimension check.");
+    Value zeroIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value isNegative = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::slt, cast<Value>(falseDimOp), zeroIndex);
+
+    Value sizeIndex =
+        rewriter.create<arith::ConstantIndexOp>(loc, tensorShape[valDim]);
+    Value isOutOfRange = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, cast<Value>(falseDimOp), sizeIndex);
+    auto orOp = rewriter.create<arith::OrIOp>(loc, isNegative, isOutOfRange);
+    auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{type},
+                                           orOp.getResult(), true, true);
+
+    Block *thenBlock = &ifOp.getThenRegion().front();
+    rewriter.setInsertionPointToStart(thenBlock);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{falseTensor});
+
+    Block *elseBlock = &ifOp.getElseRegion().front();
+    rewriter.setInsertionPointToStart(elseBlock);
+    falseExtractSliceOp->moveBefore(elseBlock, elseBlock->begin());
+    trueInsertSliceOp->moveAfter(falseExtractSliceOp);
+    extractSliceOp->moveAfter(trueInsertSliceOp);
+    insertSliceOp->moveAfter(extractSliceOp);
+
     rewriter.setInsertionPointAfter(insertSliceOp);
     rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp.getResult()});
+    rewriter.replaceOp(op, ifOp);
+  } else { // static offsets
+    rewriter.replaceOp(op, insertSliceOp);
   }
-
-  rewriter.replaceOp(op, ifOp);
-
+  LLVM_DEBUG({
+    llvm::dbgs() << "  -> [invert] Created false tensor extractSlice: "
+                 << *falseExtractSliceOp.getOperation() << "\n"
+                 << "  -> [invert] Created true tensor insertSlice: "
+                 << *trueInsertSliceOp.getOperation() << "\n"
+                 << "  -> [invert] Created ExtractSlice: "
+                 << *extractSliceOp.getOperation() << "\n"
+                 << "  -> [invert] Created InsertSlice: "
+                 << *insertSliceOp.getOperation() << "\n";
+  });
   return success();
 }
 
@@ -677,6 +829,13 @@ MakeRangeConverter::matchAndRewrite(triton::MakeRangeOp op, OpAdaptor adaptor,
       loc, op->getResultTypes(), /* operands */ ValueRange{}, ValueRange{init},
       indexingMaps, ConverterUtils::getNParallelLoopsAttrs(1), nestedBody);
 
+  linalgOp->setAttr("tt.from_make_range", mlir::UnitAttr::get(context));
+  linalgOp->setAttr("tt.make_range_offset",
+                    mlir::IntegerAttr::get(mlir::IndexType::get(context), 0));
+  linalgOp->setAttr(
+      "tt.make_range_size",
+      mlir::IntegerAttr::get(mlir::IndexType::get(context), shape[0]));
+
   int32_t startVal = op.getStartAttr().getInt();
   if (startVal == 0) {
     rewriter.replaceOp(op, linalgOp->getResults());
@@ -713,6 +872,30 @@ SplatConverter::matchAndRewrite(triton::SplatOp op, OpAdaptor adaptor,
     rewriter.replaceOpWithNewOp<linalg::FillOp>(
         op, ValueRange{adaptor.getSrc()}, ValueRange{init});
   }
+  return success();
+}
+
+LogicalResult
+UnsplatConverter::matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
+                                  ConversionPatternRewriter &rewriter) const {
+  auto loc = op.getLoc();
+  auto src = adaptor.getSrc();
+  auto srcType = cast<RankedTensorType>(src.getType());
+  auto shape = srcType.getShape();
+
+  // Create index constants for all dimensions (all zeros since we're extracting
+  // the single element)
+  SmallVector<Value> indices;
+  for (int64_t dim : shape) {
+    indices.push_back(
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0)));
+  }
+
+  // Extract the scalar element from the tensor
+  auto elementType = srcType.getElementType();
+  auto extractOp =
+      rewriter.create<tensor::ExtractOp>(loc, elementType, src, indices);
+  rewriter.replaceOp(op, extractOp.getResult());
   return success();
 }
 
@@ -858,10 +1041,84 @@ BroadcastConverter::matchAndRewrite(triton::BroadcastOp op, OpAdaptor adaptor,
 
 // Reduce Converter
 bool ReduceConverter::isReductionOpSupported(Operation *redOp) const {
-  return isa<arith::AddFOp, arith::AddIOp, arith::MulFOp, arith::MaximumFOp,
-             arith::MaxNumFOp, arith::MinimumFOp, arith::MinNumFOp,
-             arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp, arith::MaxUIOp,
-             arith::AndIOp, arith::OrIOp, arith::XOrIOp>(redOp);
+  return isa<arith::AddFOp, arith::AddIOp, arith::MulFOp, arith::MulIOp,
+             arith::MaximumFOp, arith::MaxNumFOp, arith::MinimumFOp,
+             arith::MinNumFOp, arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp,
+             arith::MaxUIOp, arith::AndIOp, arith::OrIOp, arith::XOrIOp>(redOp);
+}
+
+bool ReduceConverter::isMultiReductionOpSupported(Operation *redOp) {
+  return isa<arith::SubFOp, arith::SubIOp, arith::DivFOp, arith::DivSIOp,
+             arith::DivUIOp, arith::RemFOp, arith::RemSIOp, arith::RemUIOp>(
+      redOp);
+}
+
+Value ReduceConverter::cloneReduceOps(OpBuilder &builder, Value in, Value out,
+                                      Value opIns, Value opOuts,
+                                      triton::ReduceOp op) const {
+  auto &reg = op->getRegion(0);
+  assert(reg.getBlocks().size() == 1);
+  auto &body = reg.getBlocks().front();
+  auto numArguments = 2;
+  assert(body.getNumArguments() == numArguments);
+
+  Value ttIn = body.getArgument(0);
+  Value ttOut = body.getArgument(1);
+
+  IRMapping mapping;
+  mapping.map(ttIn, in);
+  mapping.map(ttOut, out);
+
+  for (auto &op : body.without_terminator()) {
+    builder.clone(op, mapping);
+  }
+  auto yield = cast<triton::ReduceReturnOp>(body.getTerminator());
+  return mapping.lookup(yield->getOperand(0));
+}
+
+void ReduceConverter::checkIsNotCallOp(
+    const llvm::SmallVector<Operation *> &reductionOps) const {
+  llvm::for_each(reductionOps, [](Operation *op) {
+    assert(!isa<triton::CallOp>(op) && "tt.call ops expected to be inlined in "
+                                       "tt.reduce body in ttir building stage");
+  });
+}
+
+bool ReduceConverter::isSCFOpReduce(
+    const llvm::SmallVector<Operation *> &reductionOps) const {
+  return (reductionOps.size() == 1 &&
+          reductionOps.front()->getDialect()->getNamespace() ==
+              scf::SCFDialect::getDialectNamespace());
+}
+
+bool ReduceConverter::isMultiOpReduce(
+    const llvm::SmallVector<Operation *> &reductionOps) const {
+  this->checkIsNotCallOp(reductionOps);
+
+  return (reductionOps.size() > 1) ||
+         (reductionOps.size() == 1 &&
+          this->isMultiReductionOpSupported(reductionOps.front())) ||
+         this->isSCFOpReduce(reductionOps);
+}
+
+Value ReduceConverter::computeReduceResultWithCompileFlag(
+    OpBuilder &opBuilder, Location loc, Value lhs, Value rhs, Value source,
+    Value initTensor, triton::ReduceOp op, bool compileOn91095Flag) const {
+  // Original operation list (including all operations)
+  auto originalReductionOps = this->getReductionOps(op);
+  auto realReductionOps = this->getRealReductionOps(op);
+
+  // If the size of the original operation list is greater than 1,
+  // there are additional operations such as type conversion, and these
+  // operations must be cloned.
+  bool needClone = compileOn91095Flag || originalReductionOps.size() > 1;
+  if (needClone) {
+    return this->cloneReduceOps(opBuilder, lhs, rhs, source, initTensor, op);
+  } else {
+    assert(realReductionOps.size() == 1);
+    auto rop = realReductionOps.front();
+    return this->getReductionElement(lhs, rhs, loc, rop, opBuilder, false);
+  }
 }
 
 LogicalResult
@@ -873,26 +1130,39 @@ ReduceConverter::convertToTargetOp(triton::ReduceOp op,
   auto elemType = sourceType.getElementType();
   auto resType = op.getResult().front().getType();
   auto loc = op.getLoc();
-  auto reductionOps = this->getRedOps(op);
 
+  // Actual operation list (filtering type conversion operations, leaving only
+  // actual reduce operations)
+  auto realReductionOps = this->getRealReductionOps(op);
+
+  bool multiOpReduce = this->isMultiOpReduce(realReductionOps);
   // Reduction of arbitrary operations isn't supported because using the first
   // element across the reduction dimension requires us to iterate over a
   // subview that skips over each first element.
-  if (!this->isReductionOpSupported(reductionOps.front())) {
+  if (!multiOpReduce &&
+      !this->isReductionOpSupported(realReductionOps.front())) {
+    if (compileOn91095Flag) {
+      llvm_unreachable("All reduction cases expected to be covered");
+    }
     return rewriter.notifyMatchFailure(
         op, "Only support lowering reduction with single op and limited types "
-            "of reducetion");
+            "of reduction");
   }
 
-  auto rop = reductionOps.front();
+  auto rop = realReductionOps.front();
+  auto ropLoc = rop->getLoc();
   auto axis = op.getAxis();
   auto isVectorReduce = sourceType.getRank() == 1;
 
   auto constantType = elemType;
 
-  auto accBaseConstOp = this->getRedBaseConstOp(rewriter, rop, constantType);
-  Value initTensor;
+  auto accBaseConstOp =
+      multiOpReduce
+          ? this->getMultiOpReductionBaseConstOp(rewriter, op, ropLoc,
+                                                 constantType)
+          : this->getReductionBaseConstOp(rewriter, rop, constantType);
 
+  Value initTensor;
   if (isVectorReduce) {
     auto holder = rewriter.create<bufferization::AllocTensorOp>(
         loc, RankedTensorType::get({}, constantType), ValueRange{});
@@ -915,8 +1185,9 @@ ReduceConverter::convertToTargetOp(triton::ReduceOp op,
               SmallVector<int64_t>{axis},
               [&](OpBuilder &opBuilder, Location loc, ValueRange inputs) {
                 assert(inputs.size() == 2);
-                Value result = this->getRedElement(inputs[0], inputs[1], loc,
-                                                   rop, opBuilder, false);
+                Value result = this->computeReduceResultWithCompileFlag(
+                    opBuilder, loc, inputs[0], inputs[1], source, initTensor,
+                    op, compileOn91095Flag);
                 opBuilder.create<linalg::YieldOp>(loc, result);
               })
           .getResult(0);
@@ -968,11 +1239,12 @@ LogicalResult ReduceConverter::convertToTargetOpExtended(
         b.create<linalg::YieldOp>(loc, results);
       });
 
-  auto reduceWithIndexParams = getReduceWithIndexParams(op);
-  if (!reduceWithIndexParams.has_value()) {
+  auto params = getReduceWithIndexParams(op);
+  if (failed(params)) {
     return rewriter.notifyMatchFailure(op, "meaningless reduce operation");
+  } else if (params->withIndexType != ReduceWithIndexType::None) {
+    addReduceWithIndexAttr(*params, rewriter, linalgOp);
   }
-  addReduceWithIndexAttr(*reduceWithIndexParams, rewriter, linalgOp);
 
   if (isScalarReduce) {
     SmallVector<Value> reduceResults;
@@ -988,15 +1260,16 @@ LogicalResult ReduceConverter::convertToTargetOpExtended(
   return success();
 }
 
-bool ScanConverter::isReductionOpSupported(Operation *redOp) const {
-  return isa<arith::AddFOp, arith::AddIOp, arith::MulFOp, arith::MulIOp>(redOp);
+bool ScanConverter::isReductionOpSupported(Operation *reductionOp) const {
+  return isa<arith::AddFOp, arith::AddIOp, arith::MulFOp, arith::MulIOp>(
+      reductionOp);
 }
 
 LogicalResult
 ScanConverter::convertToTargetOp(triton::ScanOp op,
                                  typename triton::ScanOp::Adaptor adaptor,
                                  ConversionPatternRewriter &rewriter) const {
-  auto reductionOps = this->getRedOps(op);
+  auto reductionOps = this->getReductionOps(op);
   if (reductionOps.empty()) {
     return rewriter.notifyMatchFailure(op,
                                        "No reduction op found in scan body");
@@ -1179,13 +1452,14 @@ ScanConverter::convertToTargetOp(triton::ScanOp op,
 
     rewriter.setInsertionPointAfter(op);
 
+    mlir::Type resultType = mlir::memref::getTensorTypeFromMemRefType(
+        dyn_cast<mlir::MemRefType>(outputMemRef.getType()));
     Value outputTensor =
 #if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToTensorOp>(loc, outputMemRef, true);
 #else
-        rewriter.create<bufferization::ToTensorOp>(
-            loc, memref::getTensorTypeFromMemRefType(outputMemRef.getType()),
-            outputMemRef, true);
+        rewriter.create<bufferization::ToTensorOp>(loc, resultType,
+                                                   outputMemRef, true);
 #endif
     rewriter.replaceOp(op, outputTensor);
     return success();
@@ -1402,13 +1676,14 @@ LogicalResult ScanConverter::convertToTargetOpExtended(
   // tt.scan operation
   llvm::SmallVector<Value> outputTensors;
   for (auto outputMemRef : outputMemRefs) {
+    mlir::Type resultType = mlir::memref::getTensorTypeFromMemRefType(
+        dyn_cast<mlir::MemRefType>(outputMemRef.getType()));
     outputTensors.push_back(
 #if LLVM_VERSION_MAJOR < 22
         rewriter.create<bufferization::ToTensorOp>(loc, outputMemRef, true));
 #else
-        rewriter.create<bufferization::ToTensorOp>(
-            loc, memref::getTensorTypeFromMemRefType(outputMemRef.getType()),
-            outputMemRef, true));
+        rewriter.create<bufferization::ToTensorOp>(loc, resultType,
+                                                   outputMemRef, true));
 #endif
   }
   rewriter.replaceOp(op, outputTensors);
@@ -1447,6 +1722,9 @@ LogicalResult ExternElementwiseClOpConverter::matchAndRewrite(
     auto mod = SymbolTable::getNearestSymbolTable(op);
     auto extFunc = dyn_cast_or_null<SymbolOpInterface>(
         SymbolTable::lookupSymbolIn(mod, op.getSymbol()));
+    // std::string symbol = op.getSymbol().str();
+    bool is_libdevice = llvm::is_contained(libdeviceOps, op.getSymbol()) &&
+                        getEnvBool("TRITON_ENABLE_LIBDEVICE_SIMT", false);
     if (!extFunc) {
       OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(&mod->getRegion(0).front());
@@ -1455,6 +1733,14 @@ LogicalResult ExternElementwiseClOpConverter::matchAndRewrite(
       extFunc.setPrivate();
       extFunc->setAttr(LLVM::LLVMDialect::getReadnoneAttrName(),
                        UnitAttr::get(rewriter.getContext()));
+      // set coreType for external func, otherwise InferFuncCoreTypePass will
+      // fail
+      if (is_libdevice) {
+        hivm::TFuncCoreType e = hivm::TFuncCoreType::AIV;
+        extFunc->setAttr(
+            hivm::TFuncCoreTypeAttr::name,
+            hivm::TFuncCoreTypeAttr::get(extFunc->getContext(), e));
+      }
     }
     assert(isa<FunctionOpInterface>(
         SymbolTable::lookupSymbolIn(mod, op.getSymbol())));
@@ -1474,6 +1760,68 @@ LogicalResult ExternElementwiseClOpConverter::matchAndRewrite(
     if (!found) {
       output = rewriter.create<tensor::EmptyOp>(
           op.getLoc(), cast<RankedTensorType>(dstTy).getShape(), dstElemTy);
+    }
+
+    if (is_libdevice) {
+      auto srcType = cast<RankedTensorType>(srcs[0].getType());
+      SmallVector<Value> dimSizes;
+      int64_t rank = srcType.getRank();
+      for (int i = 0; i < rank; ++i) {
+        if (srcType.isDynamicDim(i)) {
+          auto dimOp = rewriter.create<tensor::DimOp>(loc, srcs[0], i);
+          dimSizes.push_back(dimOp);
+        } else {
+          auto constOp = rewriter.create<arith::ConstantIndexOp>(
+              loc, srcType.getDimSize(i));
+          dimSizes.push_back(constOp);
+        }
+      }
+      // building nested loops by recursion
+      std::function<Value(OpBuilder &, Location, SmallVector<Value>, Value)>
+          buildLoops = [&](OpBuilder &b, Location loc,
+                           SmallVector<Value> indices, Value acc) -> Value {
+        int64_t dim = indices.size();
+        if (dim == rank) {
+          // innermost loop
+          SmallVector<Value> elemVals;
+          for (auto src : srcs) {
+            auto extract = b.create<tensor::ExtractOp>(loc, src, indices);
+            elemVals.push_back(extract);
+          }
+          auto call =
+              b.create<func::CallOp>(loc, op.getSymbol(), dstElemTy, elemVals);
+          auto insert =
+              b.create<tensor::InsertOp>(loc, call.getResult(0), acc, indices);
+          return insert;
+        } else {
+          Value lower = b.create<arith::ConstantIndexOp>(loc, 0);
+          Value upper = dimSizes[dim];
+          Value step = b.create<arith::ConstantIndexOp>(loc, 1);
+          auto loop =
+              b.create<scf::ForOp>(loc, lower, upper, step, ValueRange{acc});
+          Block *body = loop.getBody();
+          OpBuilder innerBuilder = OpBuilder::atBlockBegin(body);
+          SmallVector<Value> newIndices = indices;
+          newIndices.push_back(loop.getInductionVar());
+          Value innerAcc = loop.getRegionIterArgs()[0];
+          Value updatedAcc =
+              buildLoops(innerBuilder, loc, newIndices, innerAcc);
+          innerBuilder.create<scf::YieldOp>(loc, updatedAcc);
+          return loop.getResult(0);
+        }
+      };
+
+      Value result = buildLoops(rewriter, loc, {}, output);
+      if (isDstScalar) {
+        SmallVector<Value> zeroIndices(
+            rank, rewriter.create<arith::ConstantIndexOp>(loc, 0));
+        auto extract =
+            rewriter.create<tensor::ExtractOp>(loc, result, zeroIndices);
+        rewriter.replaceOp(op, extract);
+      } else {
+        rewriter.replaceOp(op, result);
+      }
+      return success();
     }
     // 3. create the linalg.map op
     auto mapOp = rewriter.create<linalg::MapOp>(
@@ -1704,7 +2052,7 @@ LogicalResult TritonMulhiuiConverter::matchAndRewrite(
   Value opl = op.getX();
   Value opr = op.getY();
   Value res = op.getResult();
-  auto newMulOp = rewriter.create<arith::MulSIExtendedOp>(
+  auto newMulOp = rewriter.create<arith::MulUIExtendedOp>(
       loc, res.getType(), res.getType(), opl, opr);
   // triton only need the high value
   rewriter.replaceOp(op, ValueRange{newMulOp.getHigh()});
@@ -1795,23 +2143,47 @@ MatmulConverter::matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
   auto opb = adaptor.getB();
   auto opc = adaptor.getC();
   auto dstType = cast<RankedTensorType>(op.getType());
+  auto elemTy = dstType.getElementType();
   auto inputPrec = op.getInputPrecision();
 
-  if (dstType.getRank() == 2) {
-    auto matmulOp = rewriter.replaceOpWithNewOp<linalg::MatmulOp>(
-        op, ValueRange{opa, opb}, ValueRange{opc});
-    matmulOp->setAttr(
-        "input_precison",
-        rewriter.getStringAttr(stringifyInputPrecision(inputPrec)));
-  } else if (dstType.getRank() == 3) {
-    auto matmulOp = rewriter.replaceOpWithNewOp<linalg::BatchMatmulOp>(
-        op, ValueRange{opa, opb}, ValueRange{opc});
-    matmulOp->setAttr(
-        "input_precison",
-        rewriter.getStringAttr(stringifyInputPrecision(inputPrec)));
-  } else {
+  auto createOp = [&](auto &&rewriter, ValueRange operands,
+                      ValueRange results) -> Operation * {
+    if (dstType.getRank() == 2)
+      return rewriter.template create<linalg::MatmulOp>(op.getLoc(), operands,
+                                                        results);
+    else if (dstType.getRank() == 3)
+      return rewriter.template create<linalg::BatchMatmulOp>(op.getLoc(),
+                                                             operands, results);
     llvm_unreachable("Datatype of DotOp operands could only be 2D or 3D");
+  };
+
+  auto replaceOp = [&](auto &&rewriter, ValueRange operands,
+                       ValueRange results) -> Operation * {
+    if (dstType.getRank() == 2)
+      return rewriter.template replaceOpWithNewOp<linalg::MatmulOp>(
+          op, operands, results);
+    else if (dstType.getRank() == 3)
+      return rewriter.template replaceOpWithNewOp<linalg::BatchMatmulOp>(
+          op, operands, results);
+    llvm_unreachable("Datatype of DotOp operands could only be 2D or 3D");
+  };
+
+  Operation *matmulOp;
+  if (mlir::isa<mlir::FloatType>(elemTy) && !elemTy.isF32()) {
+    RankedTensorType opcFp32Ty =
+        RankedTensorType::get(dstType.getShape(), rewriter.getF32Type());
+    Value opcFp32 = rewriter.create<arith::ExtFOp>(op.getLoc(), opcFp32Ty, opc);
+    matmulOp = createOp(rewriter, ValueRange{opa, opb}, ValueRange{opcFp32});
+    auto roundModeAttr = hfusion::RoundModeAttr::get(rewriter.getContext(),
+                                                     hfusion::RoundMode::RINT);
+    auto truncOp = rewriter.replaceOpWithNewOp<arith::TruncFOp>(
+        op, dstType, matmulOp->getResult(0));
+    truncOp->setAttr("round_mode", roundModeAttr);
+  } else {
+    matmulOp = replaceOp(rewriter, ValueRange{opa, opb}, ValueRange{opc});
   }
+  matmulOp->setAttr("input_precision",
+                    rewriter.getStringAttr(stringifyInputPrecision(inputPrec)));
   return success();
 }
 
@@ -1954,19 +2326,88 @@ SortOpConverter::matchAndRewrite(triton::ascend::SortOp op, OpAdaptor adaptor,
 LogicalResult
 DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
                                     ConversionPatternRewriter &rewriter) const {
+  Location loc = op.getLoc();
 #if LLVM_VERSION_MAJOR < 22
   Value lhs = adaptor.getLhs();
-  Value lhsScale = adaptor.getLhsScale();
-  Value rhsScale = adaptor.getRhsScale();
   Value rhs = adaptor.getRhs();
 #else
   Value lhs = adaptor.getA();
-  Value lhsScale = adaptor.getAScale();
-  Value rhsScale = adaptor.getBScale();
   Value rhs = adaptor.getB();
 #endif
   Value c = adaptor.getC();
+#if LLVM_VERSION_MAJOR < 22
+  Value lhsScale = adaptor.getLhsScale();
+  Value rhsScale = adaptor.getRhsScale();
+#else
+  Value lhsScale = adaptor.getAScale();
+  Value rhsScale = adaptor.getBScale();
+#endif
   RankedTensorType dstType = cast<RankedTensorType>(op.getType());
+
+  auto lhsElemType = op.getAElemType();
+  auto rhsElemType = op.getBElemType();
+
+  bool isFP8Input = (lhsElemType == triton::ScaleDotElemType::E4M3 ||
+                     lhsElemType == triton::ScaleDotElemType::E5M2) &&
+                    (rhsElemType == triton::ScaleDotElemType::E4M3 ||
+                     rhsElemType == triton::ScaleDotElemType::E5M2);
+  bool isFP4Input = (lhsElemType == triton::ScaleDotElemType::E2M1) &&
+                    (rhsElemType == triton::ScaleDotElemType::E2M1);
+  if (isFP8Input || isFP4Input) {
+    if (!rhsScale) {
+      RankedTensorType defaultScaleTy =
+          RankedTensorType::get({1}, rewriter.getI8Type());
+      Value defaultScaleVal =
+          rewriter.create<arith::ConstantOp>(loc, rewriter.getI8IntegerAttr(1));
+      Value defaultScaleEmpty = rewriter.create<tensor::EmptyOp>(
+          loc, defaultScaleTy.getShape(), defaultScaleTy.getElementType());
+      rhsScale = rewriter
+                     .create<linalg::FillOp>(loc, ValueRange{defaultScaleVal},
+                                             ValueRange{defaultScaleEmpty})
+                     .getResult(0);
+    }
+    Value acc = c ? c
+                  : rewriter.create<tensor::EmptyOp>(loc, dstType.getShape(),
+                                                     dstType.getElementType());
+
+    // Get the ScaleDotElemType enum
+    // Helper to convert
+    auto convertFormat =
+        [&](triton::ScaleDotElemType ty) -> mlir::hfusion::DataformatAttr {
+      auto ctx = rewriter.getContext();
+      switch (ty) {
+      case triton::ScaleDotElemType::E2M1:
+        return mlir::hfusion::DataformatAttr::get(
+            ctx, mlir::hfusion::Dataformat::FP4E2M1_T);
+      case triton::ScaleDotElemType::E4M3:
+        return mlir::hfusion::DataformatAttr::get(
+            ctx, mlir::hfusion::Dataformat::FP8E4M3_T);
+      case triton::ScaleDotElemType::E5M2:
+        return mlir::hfusion::DataformatAttr::get(
+            ctx, mlir::hfusion::Dataformat::FP8E5M2_T);
+      default:
+        llvm_unreachable("unsupported ScaleDotElemType");
+      }
+    };
+
+    auto lhsFmt = convertFormat(lhsElemType);
+    auto rhsFmt = convertFormat(rhsElemType);
+
+    Value matmulMxResult = rewriter.create<hfusion::MatMulMxOp>(
+        loc, dstType, lhs, rhs, lhsScale, rhsScale, acc, lhsFmt, rhsFmt);
+
+    Value finalResult = matmulMxResult;
+    if (dstType.getElementType().isBF16()) {
+      finalResult =
+          rewriter.create<arith::TruncFOp>(loc, dstType, matmulMxResult);
+    }
+    rewriter.replaceOp(op, finalResult);
+    return success();
+  }
+
+  if (!lhsScale) {
+    return op.emitError("lhsScale is required for non-FP8 input");
+  }
 
   RankedTensorType lhsTy = cast<RankedTensorType>(lhs.getType());
   RankedTensorType lhsScaleTy = cast<RankedTensorType>(lhsScale.getType());
@@ -1984,6 +2425,47 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
   Type bf16Ty = rewriter.getBF16Type();
   Type fp16Ty = rewriter.getF16Type();
   Type fp32Ty = rewriter.getF32Type();
+  bool fastMath = op.getFastMath();
+
+  auto createNanSplat = [&](RankedTensorType tensorTy) -> Value {
+    auto floatTy = cast<FloatType>(tensorTy.getElementType());
+    auto nanAttr = rewriter.getFloatAttr(
+        floatTy, APFloat::getNaN(floatTy.getFloatSemantics()));
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, tensorTy.getShape(),
+                                                   tensorTy.getElementType());
+    return rewriter
+        .create<linalg::FillOp>(
+            loc, ValueRange{rewriter.create<arith::ConstantOp>(loc, nanAttr)},
+            ValueRange{empty})
+        .getResult(0);
+  };
+
+  auto createNaNMask = [&](Value scaleTensor,
+                           RankedTensorType scaleTy) -> Value {
+    if (scaleTy.getElementType().isIntOrIndex()) {
+      auto bitWidth = scaleTy.getElementTypeBitWidth();
+      auto allOnes = APInt::getAllOnes(bitWidth);
+      auto sentinel = rewriter.create<arith::ConstantOp>(
+          loc, scaleTy, DenseElementsAttr::get(scaleTy, allOnes));
+      return rewriter
+          .create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, scaleTensor,
+                                 sentinel)
+          .getResult();
+    }
+
+    return rewriter
+        .create<arith::CmpFOp>(loc, arith::CmpFPredicate::UNO, scaleTensor,
+                               scaleTensor)
+        .getResult();
+  };
+
+  auto applyNaNMask = [&](Value valueTensor, Value maskTensor) -> Value {
+    auto valueTy = cast<RankedTensorType>(valueTensor.getType());
+    Value nanTensor = createNanSplat(valueTy);
+    return rewriter
+        .create<arith::SelectOp>(loc, maskTensor, nanTensor, valueTensor)
+        .getResult();
+  };
 
   if (lhsScaleTy.getElementType().isIntOrIndex()) {
     RankedTensorType lhsScaleI16Ty =
@@ -2134,6 +2616,45 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
 
     rhs =
         rewriter.create<arith::MulFOp>(op.getLoc(), rhs, scaledRhs).getResult();
+
+    if (!fastMath) {
+      Value rhsScaleNaNMask =
+          createNaNMask(transposedRhsScale, transposedRhsScaleTy);
+      Value rhsExpandedMask =
+          rewriter
+              .create<triton::ExpandDimsOp>(
+                  op.getLoc(),
+                  RankedTensorType::get(rhsExpandedShape1,
+                                        rewriter.getI1Type()),
+                  rhsScaleNaNMask, rewriter.getI32IntegerAttr(2))
+              .getResult();
+      Value rhsBroadcastMask =
+          rewriter
+              .create<triton::BroadcastOp>(
+                  op.getLoc(),
+                  RankedTensorType::get(rhsBroadcastShape,
+                                        rewriter.getI1Type()),
+                  rhsExpandedMask)
+              .getResult();
+      Value transposedBroadcastMask =
+          rewriter
+              .create<triton::TransOp>(
+                  op.getLoc(),
+                  RankedTensorType::get({rhsD0, rhsD2, rhsD1},
+                                        rewriter.getI1Type()),
+                  rhsBroadcastMask,
+                  DenseI32ArrayAttr::get(rewriter.getContext(), transposeOrder))
+              .getResult();
+      Value collapsedRhsMask =
+          rewriter
+              .create<tensor::CollapseShapeOp>(
+                  op.getLoc(),
+                  RankedTensorType::get({rhsD0 * rhsD2, rhsD1},
+                                        rewriter.getI1Type()),
+                  transposedBroadcastMask, rhsReassociation)
+              .getResult();
+      rhs = applyNaNMask(rhs, collapsedRhsMask);
+    }
   }
 
   int64_t D0 = lhsScaleTy.getShape()[0];
@@ -2175,6 +2696,32 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
   Value scaledLhsFinal =
       rewriter.create<arith::MulFOp>(op.getLoc(), lhs, scaledLhs).getResult();
 
+  if (!fastMath) {
+    Value lhsScaleNaNMask = createNaNMask(lhsScale, lhsScaleTy);
+    Value lhsExpandedMask =
+        rewriter
+            .create<triton::ExpandDimsOp>(
+                op.getLoc(),
+                RankedTensorType::get(expandedShape1, rewriter.getI1Type()),
+                lhsScaleNaNMask, rewriter.getI32IntegerAttr(2))
+            .getResult();
+    Value lhsBroadcastMask =
+        rewriter
+            .create<triton::BroadcastOp>(
+                op.getLoc(),
+                RankedTensorType::get(broadcastShape, rewriter.getI1Type()),
+                lhsExpandedMask)
+            .getResult();
+    Value collapsedLhsMask =
+        rewriter
+            .create<tensor::CollapseShapeOp>(
+                op.getLoc(),
+                RankedTensorType::get({D0, D1 * D2}, rewriter.getI1Type()),
+                lhsBroadcastMask, reassociation)
+            .getResult();
+    scaledLhsFinal = applyNaNMask(scaledLhsFinal, collapsedLhsMask);
+  }
+
   Operation *matmulOp;
   if (dstType.getRank() == 2) {
     matmulOp = rewriter.create<linalg::MatmulOp>(
@@ -2211,50 +2758,6 @@ PtrToIntConverter::matchAndRewrite(triton::PtrToIntOp op, OpAdaptor adaptor,
       rewriter.create<arith::IndexCastOp>(loc, resultType, ptrToIndexOp);
 
   rewriter.replaceOp(op, intResult);
-  return success();
-}
-
-LogicalResult EmbeddingGatherConverter::matchAndRewrite(
-    triton::ascend::EmbeddingGatherOp op, OpAdaptor adaptor,
-    ConversionPatternRewriter &rewriter) const {
-  auto loc = op.getLoc();
-
-  auto moduleOp = op->getParentOfType<ModuleOp>();
-  rewriter.setInsertionPoint(moduleOp.getBody(),
-                             std::prev(moduleOp.getBody()->end()));
-
-  auto funcName = generateUniqueFuncName(moduleOp, funcNameBase);
-
-  auto src = adaptor.getSrc();
-  auto idx = op.getIdx();
-  auto bound = op.getBound();
-  auto blksiz = op.getBlocksize();
-  auto offsets = op.getOffsets();
-  auto numels = op.getNumels();
-  auto res = op.getResult();
-  auto resTy = res.getType();
-
-  // convert !tt.ptr<f32> to memref<?xf32>
-  auto srcTy = dyn_cast<MemRefType>(src.getType());
-  if (!srcTy) {
-    return rewriter.notifyMatchFailure(op, "expected MemRefType for src");
-  }
-  SmallVector<Type> inputTypes(
-      {srcTy, idx.getType(), bound.getType(), blksiz.getType()});
-  inputTypes.append(offsets.getTypes().begin(), offsets.getTypes().end());
-  inputTypes.append(numels.getTypes().begin(), numels.getTypes().end());
-  auto libFnType = rewriter.getFunctionType(inputTypes, {resTy});
-  auto funcOp = rewriter.create<func::FuncOp>(loc, funcName.str(), libFnType);
-  SymbolTable::setSymbolVisibility(funcOp, SymbolTable::Visibility::Private);
-
-  rewriter.setInsertionPoint(op);
-  SmallVector<Value> inputVals({src, idx, bound, blksiz});
-  inputVals.append(offsets.begin(), offsets.end());
-  inputVals.append(numels.begin(), numels.end());
-  auto callOp = rewriter.create<func::CallOp>(loc, funcOp.getSymNameAttr(),
-                                              TypeRange({resTy}), inputVals);
-
-  rewriter.replaceOp(op, callOp);
   return success();
 }
 
@@ -2517,67 +3020,90 @@ LogicalResult IndexSelectSimdConverter::matchAndRewrite(
   // shape
   auto srcMemRefType = cast<MemRefType>(src.getType());
 
-  // Build multi-dimensional memref type
-  SmallVector<int64_t> fullSrcShape;
-  for (auto shapeVal : srcShapeVals) {
-    if (auto constOp = shapeVal.getDefiningOp<arith::ConstantIndexOp>()) {
-      fullSrcShape.push_back(constOp.value());
-    } else {
-      fullSrcShape.push_back(ShapedType::kDynamic);
+  // DenseI32ArrayAttr can be implicitly converted to ArrayRef<int32_t>
+  ArrayRef<int32_t> readShape = readShapeAttr;
+
+  // Helper lambda to convert Value to Index type if needed
+  auto toIndexValue = [&](Value val) -> Value {
+    if (!val.getType().isIndex()) {
+      return rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                                 val);
     }
+    return val;
+  };
+
+  // Build multi-dimensional memref type and determine static sizes
+  // Merge two passes: build fullSrcShape and staticSizes in one loop
+  SmallVector<int64_t> fullSrcShape;
+  SmallVector<int64_t> staticSizes;
+  SmallVector<Value> sizes;
+
+  for (size_t i = 0; i < srcShapeVals.size(); ++i) {
+    bool isDynamicDim = (i == static_cast<size_t>(dim) && readShape[i] == -1);
+    int64_t staticSize;
+
+    if (isDynamicDim) {
+      // Dynamic dimension: readShape[i] == -1 indicates dynamic
+      staticSize = ShapedType::kDynamic;
+      fullSrcShape.push_back(ShapedType::kDynamic);
+      sizes.push_back(toIndexValue(srcShapeVals[i]));
+    } else if (auto constOp =
+                   srcShapeVals[i].getDefiningOp<arith::ConstantIndexOp>()) {
+      // Static dimension: use constant value
+      staticSize = constOp.value();
+      fullSrcShape.push_back(staticSize);
+    } else {
+      // Runtime value: must use dynamic
+      staticSize = ShapedType::kDynamic;
+      fullSrcShape.push_back(ShapedType::kDynamic);
+      sizes.push_back(toIndexValue(srcShapeVals[i]));
+    }
+    staticSizes.push_back(staticSize);
   }
   auto fullSrcMemRefType = MemRefType::get(fullSrcShape, elemType);
 
-  // Reinterpret cast from 1D to multi-dimensional
-  // Build strides: stride[i] = product of all dimensions after i
-  SmallVector<OpFoldResult> sizes, strides; // offsets are 0
+  // Build static offsets, sizes, and strides for ReinterpretCastOp
+  SmallVector<Value> offsets, strides;
+  SmallVector<int64_t> staticOffsets, staticStrides;
+  staticOffsets.push_back(0); // offsets are 0
 
-  // Calculate strides from right to left (row-major layout)
-  SmallVector<Value> stridesList;
-  Value currentStride = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-
-  for (int i = fullSrcShape.size() - 1; i >= 0; --i) {
-    stridesList.insert(stridesList.begin(), currentStride);
-
-    // Update stride for next dimension: stride *= size[i]
-    if (i > 0) { // Don't need to calculate for the first dimension
-      if (fullSrcShape[i] != ShapedType::kDynamic) {
-        // Static dimension: multiply by constant
-        currentStride = rewriter.create<arith::MulIOp>(
-            loc, currentStride,
-            rewriter.create<arith::ConstantIndexOp>(loc, fullSrcShape[i]));
-      } else {
-        // Dynamic dimension: multiply by runtime value
-        Value dimSize = srcShapeVals[i];
-        if (!dimSize.getType().isIndex()) {
-          dimSize = rewriter.create<arith::IndexCastOp>(
-              loc, rewriter.getIndexType(), dimSize);
-        }
-        currentStride =
-            rewriter.create<arith::MulIOp>(loc, currentStride, dimSize);
-      }
-    }
-  }
-
-  // Build offsets, sizes, and strides for ReinterpretCastOp
+  // Calculate static strides: stride[i] = product of all dimensions after i
   for (size_t i = 0; i < srcShapeVals.size(); ++i) {
-    // Convert Value to OpFoldResult for sizes
-    Value sizeVal = srcShapeVals[i];
-    if (!sizeVal.getType().isIndex()) {
-      sizeVal = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getIndexType(), sizeVal);
-    }
-    sizes.push_back(sizeVal);
+    int64_t staticStride = 1;
+    bool isDynamic = false;
 
-    // Convert Value to OpFoldResult for strides
-    strides.push_back(stridesList[i]);
+    // Check if stride needs to be dynamic (any dimension after i is dynamic)
+    for (size_t j = i + 1; j < srcShapeVals.size(); ++j) {
+      if (staticSizes[j] == ShapedType::kDynamic) {
+        isDynamic = true;
+        break;
+      }
+      staticStride *= staticSizes[j];
+    }
+
+    if (isDynamic) {
+      staticStride = ShapedType::kDynamic;
+      // Compute stride dynamically: stride[i] = product of sizes after i
+      Value strideVal = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+      for (size_t j = i + 1; j < srcShapeVals.size(); ++j) {
+        if (staticSizes[j] != ShapedType::kDynamic) {
+          strideVal = rewriter.create<arith::MulIOp>(
+              loc, strideVal,
+              rewriter.create<arith::ConstantIndexOp>(loc, staticSizes[j]));
+        } else {
+          // Dynamic dimension: use runtime value
+          strideVal = rewriter.create<arith::MulIOp>(
+              loc, strideVal, toIndexValue(srcShapeVals[j]));
+        }
+      }
+      strides.push_back(strideVal);
+    }
+    staticStrides.push_back(staticStride);
   }
 
-  OpFoldResult offset = rewriter.getIndexAttr(0);
-
-  // Use the correct builder method for ReinterpretCastOp
   auto srcMemRef = rewriter.create<memref::ReinterpretCastOp>(
-      loc, fullSrcMemRefType, src, offset, sizes, strides);
+      loc, fullSrcMemRefType, src, offsets, sizes, strides, staticOffsets,
+      staticSizes, staticStrides);
 
   // Allocate output buffer
   auto resultMemRefType = MemRefType::get(resultShape, elemType);
@@ -2617,8 +3143,6 @@ LogicalResult IndexSelectSimdConverter::matchAndRewrite(
   // Build source subview offsets/sizes/strides
   SmallVector<OpFoldResult> srcSubviewOffsets, srcSubviewSizes,
       srcSubviewStrides;
-  // DenseI32ArrayAttr can be implicitly converted to ArrayRef<int32_t>
-  ArrayRef<int32_t> readShape = readShapeAttr;
 
   for (size_t i = 0; i < srcOffsetVals.size(); ++i) {
     if (i == static_cast<size_t>(dim)) {

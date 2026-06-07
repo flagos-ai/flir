@@ -23,17 +23,16 @@
 #ifndef TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H
 #define TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H
 
+#include "incubated/Conversion/TritonToLinalgIncubated/MarkTensorKindPass.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 
-namespace mlir {
-namespace triton {
+namespace mlir::triton {
 namespace Incubated {
 
 #define GEN_PASS_REGISTRATION
 #include "incubated/Conversion/TritonToLinalgIncubated/Passes.h.inc"
 
 } // namespace Incubated
-} // namespace triton
-} // namespace mlir
+} // namespace mlir::triton
 
 #endif // TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H

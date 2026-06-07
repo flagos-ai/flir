@@ -2,6 +2,7 @@ add_triton_library(TritonToUnstructureIncubated
         UnstructureConversionPass.cpp
         OffsetAnalysis.cpp
         BubbleUpOperation.cpp
+        ReplaceArguments.cpp
 
   DEPENDS
   TritonToUnstructureConversionPassIncGen

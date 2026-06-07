@@ -20,10 +20,10 @@ repos:
           (?x)^(
             include/incubated/.*\.(h|hpp|cc|cpp)|
             include/mlir-ext/.*\.(h|hpp|cc|cpp)|
-            include/npu/.*\.(h|hpp|cc|cpp)|
             lib/UtilsIncubated/.*\.(h|hpp|cc|cpp)|
-            lib/Dialect/(MathExt|TritonAscend|TritonStructuredIncubated)/.*\.(h|hpp|cc|cpp)|
-            lib/Conversion/(DiscreteMaskAccessConversion|NoBufferize_FlagTree|TritonToAnnotation|TritonToLinalgIncubated|TritonToStructuredIncubated|TritonToUnstructureIncubated)/.*\.(h|hpp|cc|cpp)|
+            lib/Dialect/(MathExt|TritonStructuredIncubated)/.*\.(h|hpp|cc|cpp)|
+            lib/Conversion/DiscreteMaskAccessConversion/.*\.(h|hpp|cc|cpp)|
+            lib/Conversion/.*(Incubated|FlagTree)/.*\.(h|hpp|cc|cpp)|
             .*_FlagTree\.(h|hpp|cc|cpp)
           )$
         stages: [pre-commit, pre-push, manual]

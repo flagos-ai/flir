@@ -34,9 +34,6 @@
 #define GEN_PASS_DEF_DISCRETEMASKACCESSCONVERSION
 #include "incubated/Conversion/DiscreteMaskAccessConversion/Passes.h.inc"
 
-extern bool compileOn91095Flag;
-extern bool forceSimtTemplateFlag;
-
 namespace mlir {
 namespace triton {
 
@@ -57,7 +54,7 @@ class DiscreteMaskAccessConversionPass
 public:
   explicit DiscreteMaskAccessConversionPass(
       const DiscreteMaskAccessConversionOptions &options);
-
+  void getDependentDialects(DialectRegistry &registry) const override;
   void runOnOperation() override;
 };
 

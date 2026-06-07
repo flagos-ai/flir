@@ -30,12 +30,15 @@
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/LogicalResult.h"
 
 #include <functional>
 #include <optional>
+#include <string>
 
 namespace mlir {
 
@@ -44,6 +47,8 @@ namespace ConverterUtils {
 const std::string GeneratedByMakeTensorPtrTAG = "GeneratedByMakeTensorPtr";
 const std::string discreteMaskAttrName = "DiscreteMask";
 const std::string discreteAttrName = "DiscreteMemAccess";
+const std::string continuousAttrName = "ContinuousMemAccess";
+const std::string customSrcPtrIndexAttrName = "SrcPtrIndex";
 
 bool isaPermutedMemRefType(MemRefType);
 
@@ -60,12 +65,14 @@ Value getScalarValue(Value operand, Location loc,
                      ConversionPatternRewriter &rewriter);
 
 memref::SubViewOp makeSubViewOp(Value src,
+                                const llvm::SmallVector<OpFoldResult> &offsets,
                                 const llvm::SmallVector<OpFoldResult> &sizes,
                                 const Location &loc,
                                 ConversionPatternRewriter &rewriter);
 
 tensor::ExtractSliceOp
-makeExtractSliceOp(Value src, const llvm::SmallVector<OpFoldResult> &sizes,
+makeExtractSliceOp(Value src, const llvm::SmallVector<OpFoldResult> &offsets,
+                   const llvm::SmallVector<OpFoldResult> &sizes,
                    const Location &loc, ConversionPatternRewriter &rewriter);
 
 std::optional<Operation *> getFullShapeOp(Value val,
@@ -188,6 +195,8 @@ scf::ForOp createNestedLoops(
 
 ModuleOp getModuleOpFromOperation(Operation *op);
 
+bool isTensorPtrType(Type type);
+
 } // namespace triton
 
 class OpBuilder;
@@ -213,17 +222,17 @@ OpFoldResult minOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
 OpFoldResult maxOpFoldResult(const OpFoldResult &lhs, const OpFoldResult &rhs,
                              const Location &loc, OpBuilder &b);
 
-enum class ReduceWithIndexType { MAX, MIN };
-enum class TieBreakType { LEFT, RIGHT };
+enum class ReduceWithIndexType { MAX, MIN, None };
+enum class TieBreakType { LEFT, RIGHT, None };
 
 struct ReduceWithIndexParams {
-  ReduceWithIndexType withIndexType;
-  TieBreakType tieBreakType;
+  ReduceWithIndexType withIndexType = ReduceWithIndexType::None;
+  TieBreakType tieBreakType = TieBreakType::None;
   bool isUnsignedSrc;
 };
 
-std::optional<ReduceWithIndexParams>
-getReduceWithIndexParams(triton::ReduceOp reduceOp);
+llvm::FailureOr<ReduceWithIndexParams>
+getReduceWithIndexParams(triton::ReduceOp op);
 
 void addReduceWithIndexAttr(ReduceWithIndexParams params,
                             ConversionPatternRewriter &rewriter,
@@ -245,8 +254,15 @@ Value materializeValue(OpBuilder &builder, Location loc, OpFoldResult ofr);
 
 bool isZero(const OpFoldResult ofr);
 
+bool isOne(const OpFoldResult ofr);
+
 Value convertToIndexIfNeeded(Value intValue, const Location &loc, OpBuilder &b);
 
+RankedTensorType getExtractSlicedType(ArrayRef<OpFoldResult> shape,
+                                      const llvm::SmallBitVector &droppedDims,
+                                      Type elemType);
+
+bool checkStructureAnnotated(Operation *op, RewriterBase &rewriter);
 } // namespace mlir
 
 #endif // TRITONNPU_UTILS_UTILS_H

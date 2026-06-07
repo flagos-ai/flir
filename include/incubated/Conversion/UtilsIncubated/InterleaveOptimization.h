@@ -70,6 +70,8 @@ enum class IndexMode : int { EVEN_MODE = 0, ODD_MODE = 1 };
 
 MemRefType expandInterleaveMemRefType(MemRefType originType);
 
+bool checkIsCaseOffsetValid(OpFoldResult originOffset);
+
 std::pair<OpFoldResult, IndexMode>
 recountReinterpretCastOffset(OpFoldResult originOffset, Builder &builder);
 
@@ -80,8 +82,7 @@ DeinterleaveStatusOptimization(triton::LoadOp op,
 
 LogicalResult DeinterleaveStatusWithMaskOptimization(
     triton::LoadOp op, triton::LoadOp::Adaptor adaptor,
-    ConversionPatternRewriter &rewriter,
-    mlir::triton::Incubated::MaskState &mstate, Value localMem);
+    ConversionPatternRewriter &rewriter, mlir::triton::Incubated::MaskState &mstate, Value localMem);
 
 LogicalResult
 InterleaveStatusOptimization(SmallVector<Operation *> materializeVec);

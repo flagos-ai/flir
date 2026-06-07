@@ -4,7 +4,7 @@
 include "mlir/Pass/PassBase.td"
 
 def TritonToUnstructureIncubated : Pass<"triton-to-unstructure-incubated", "mlir::ModuleOp"> {
-    let summary = "Convert Triton for unstructure case(Incubated)";
+    let summary = "Convert Triton for unstructure case";
     let constructor = "triton::createTritonToUnstructureIncubatedPass()";
     let options = [
         Option<"forceScalarizeMode", "force-scalarize-mode", "bool", "false", 
@@ -26,4 +26,5 @@ def BubbleUpOperation : Pass<"bubble-up-operation", "mlir::ModuleOp"> {
            "Enable aggressive bubble up operation.">,
     ];
 }
+
 #endif // TRITON_TO_UNSTRUCTURE_CONVERSION_PASSES

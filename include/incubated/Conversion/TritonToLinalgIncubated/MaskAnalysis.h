@@ -38,7 +38,9 @@ class OpBuilder;
 
 namespace triton {
 // use to decode the pattern in a mask used for load and store
+
 namespace Incubated {
+enum class MaskPosition { Head, Tail, Middle, Unknown };
 
 class MaskState {
 public:
@@ -53,11 +55,49 @@ public:
     return dims.size();
   }
 
+  MaskPosition getMaskPosition(llvm::ArrayRef<int64_t> &tensorShape) {
+    if (getRank() != tensorShape.size()) {
+      return MaskPosition::Unknown;
+    }
+
+    bool isHead = true;
+    int dynIndex = -1;
+
+    for (int i = 0; i < getRank(); ++i) {
+      auto offsetVal = mlir::getConstantIntValue(offsets[i]);
+      if (!offsetVal.has_value() || offsetVal.value() != 0) {
+        isHead = false;
+        if (dynIndex == -1) {
+          dynIndex = i;
+        } else { // temporarily support only one dyn dim
+          return MaskPosition::Unknown;
+        }
+      }
+    }
+
+    if (isHead) {
+      return MaskPosition::Head;
+    }
+
+    for (int i = 0; i < getRank(); ++i) {
+      auto dimVal = mlir::getConstantIntValue(dims[i]);
+      if (i == dynIndex) {
+        continue;
+      }
+      if (!dimVal.has_value() || dimVal.value() != tensorShape[i]) {
+        return MaskPosition::Unknown;
+      }
+    }
+    return MaskPosition::Middle;
+  }
+
   bool isEmpty() const { return getRank() == 0 && !scalar && !start && !end; }
 
   bool isMask() const {
     return !start && !end && !scalar && dims.size() != 0 && offsets.size() != 0;
   }
+
+  bool isMemrefSubviewValid(Value source, OpBuilder &builder) const;
 
   // parse value recursively
   LogicalResult parse(Value operand, const Location &loc, OpBuilder &builder);
@@ -65,9 +105,19 @@ public:
   tensor::ExtractSliceOp getExtractSlice(Value source, const Location &loc,
                                          OpBuilder &builder) const;
 
+  tensor::ExtractSliceOp getExtractSlice(Value source, const Location &loc,
+                                         OpBuilder &builder,
+                                         SmallVector<OpFoldResult> offsets,
+                                         SmallVector<OpFoldResult> dims) const;
+
   tensor::InsertSliceOp getInsertSlice(Value source, Value dest,
                                        const Location &loc,
                                        OpBuilder &builder) const;
+
+  tensor::InsertSliceOp getInsertSlice(Value source, Value dest,
+                                       const Location &loc, OpBuilder &builder,
+                                       SmallVector<OpFoldResult> offsets,
+                                       SmallVector<OpFoldResult> dims) const;
 
   memref::SubViewOp getSubview(Value source, const Location &loc,
                                OpBuilder &builder) const;
@@ -92,6 +142,10 @@ private:
   // Helper function to handle operator `and` both mask state
   LogicalResult minStates(const MaskState &lhsState, const MaskState &rhsState,
                           const Location &loc, OpBuilder &builder);
+
+  OpFoldResult clampToNonNegativeIndex(const OpFoldResult value,
+                                       const Location &loc,
+                                       OpBuilder &builder) const;
 
   // Helper functions to parse values to populate MaskState
 
@@ -138,6 +192,10 @@ private:
   // Operand is the result of expand_dims
   LogicalResult parseExpandDims(triton::ExpandDimsOp expandDimsOp,
                                 const Location &loc, OpBuilder &builder);
+
+  // Operand is the result of insert
+  LogicalResult parseInsert(tensor::InsertOp insertOp, const Location &loc,
+                            OpBuilder &builder);
 };
 
 std::optional<Incubated::MaskState> runMaskAnalysis(Operation *op,
