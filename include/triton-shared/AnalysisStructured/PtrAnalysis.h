@@ -38,6 +38,11 @@ const extern std::string ptrAnalysisAttr;
 // shape field means the same field as tt.make_tensor_ptr; when it describes a
 // non-block pointer, shape field indicates how address wraps around (i.e.,
 // modulo); a constant 0 indicates no modulo for the dimension.
+// Multi-dimension PtrState, which has one unstructured dimension, is supported
+// for gather/scatter access. The unstructured dimension is marked by a tensor
+// type offset. The tensor offset for the unstructured dimension must be
+// expanded from a 1D tensor. The analysis will fail for multi-dimension
+// unstructured offsets.
 struct PtrState {
 
   SmallVector<OpFoldResult> offsets;
@@ -57,6 +62,10 @@ struct PtrState {
 
   bool dimHasModulo(uint32_t dim) const;
 
+  bool dimIsStructured(uint32_t dim) const;
+  int32_t getNonStructuredDim() const;
+  bool isStructured() const;
+
   bool isBlockPtr() const;
 
   void dump() const;
@@ -73,8 +82,8 @@ struct PtrState {
   LogicalResult mulState(const PtrState &lhsState, const PtrState &rhsState,
                          Operation *op, OpBuilder &builder);
 
-  tts::MakeTensorPtrOp createTTSMakeTensorPtrOp(OpBuilder &builder,
-                                                Location loc);
+  // All dim structured or only one dim unstructured
+  Operation *createTTSMakeTensorPtrOp(OpBuilder &builder, Location loc);
 };
 
 class PtrAnalysis {
@@ -161,6 +170,16 @@ public:
 
   LogicalResult visitOperandRem(arith::RemSIOp mulOp, PtrState &state,
                                 const Location loc, OpBuilder &builder);
+
+  // Operand is the result of arith.divsi (signed integer division).
+  // Main assumptions:
+  //  Divisor must be a constant scalar
+  //  Dividend must be 1D tensor or 2D tensor with one dimension being 1
+  //  Division is applied to offsets, strides, and scalar values
+  // Expected result:
+  //  All offset and stride values are divided by the constant divisor
+  LogicalResult visitOperandDivSI(arith::DivSIOp divOp, PtrState &state,
+                                  const Location loc, OpBuilder &builder);
 
   // Operand is the result of make_range.
   // Main assumptions:

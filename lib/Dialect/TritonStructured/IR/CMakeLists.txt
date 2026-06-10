@@ -8,4 +8,5 @@ add_triton_library(TritonStructuredIR
   LINK_LIBS PUBLIC
   TritonIR
   MLIRIR
+  TritonSharedAnalysis
   )

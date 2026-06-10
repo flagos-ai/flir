@@ -131,6 +131,72 @@ void MakeTensorPtrOp::build(OpBuilder &b, OperationState &state, Value base,
         b.getDenseI64ArrayAttr(staticShape), order);
 }
 
+void MakeGatherScatterTensorPtrOp::build(OpBuilder &b, OperationState &state,
+                                         Value base, Value gatherScatterOffset,
+                                         int gatherScatterDim,
+                                         ArrayRef<int64_t> sizes,
+                                         ArrayRef<OpFoldResult> strides,
+                                         ArrayRef<OpFoldResult> offsets) {
+  build(b, state, base, gatherScatterOffset, Value(), gatherScatterDim, sizes,
+        strides, offsets);
+}
+
+void MakeGatherScatterTensorPtrOp::build(
+    OpBuilder &b, OperationState &state, Value base, Value gatherScatterOffset,
+    Value gatherScatterMask, int gatherScatterDim, ArrayRef<int64_t> sizes,
+    ArrayRef<OpFoldResult> strides, ArrayRef<OpFoldResult> offsets) {
+  SmallVector<int64_t> staticStrides, staticOffsets;
+  SmallVector<Value> dynamicStrides, dynamicOffsets;
+  for (auto [i, offset] : llvm::enumerate(offsets)) {
+    if (i != gatherScatterDim)
+      dispatchIndexOpFoldResult(offset, dynamicOffsets, staticOffsets);
+    else
+      staticOffsets.push_back(0);
+  }
+  dispatchIndexOpFoldResults(strides, dynamicStrides, staticStrides);
+
+  auto basePtr = cast<triton::PointerType>(base.getType());
+  auto elemType = basePtr.getPointeeType();
+
+  Type resType = RankedTensorType::get(sizes, basePtr);
+
+  build(b, state, resType, base, gatherScatterOffset,
+        b.getI32IntegerAttr(gatherScatterDim), b.getDenseI64ArrayAttr(sizes),
+        dynamicStrides, dynamicOffsets, b.getDenseI64ArrayAttr(staticStrides),
+        b.getDenseI64ArrayAttr(staticOffsets), gatherScatterMask);
+}
+
+LogicalResult MakeGatherScatterTensorPtrOp::verify() {
+  // Verify that the gatherScatterDim is within the valid range.
+  if (getGatherScatterDim() < 0 || getGatherScatterDim() >= getSizes().size()) {
+    return emitError("gatherScatterDim is out of bounds");
+  }
+
+  // Verify that the sizes, strides, and offsets have compatible dimensions.
+  if (getMixedSizes().size() != getMixedStrides().size() ||
+      getMixedSizes().size() != getMixedOffsets().size()) {
+    return emitError(
+        "sizes, strides, and offsets must have the same number of dimensions");
+  }
+
+  Type offsetType = getGatherScatterOffset().getType();
+
+  // Verify that the gatherScatterOffset is a 1D tensor.
+  auto rankedTensorType = dyn_cast<RankedTensorType>(offsetType);
+  if (!rankedTensorType) {
+    return emitError("gatherScatterOffset must be a 1D tensor");
+  }
+
+  Type offsetEltType = rankedTensorType.getElementType();
+
+  if (!offsetEltType.isIntOrIndex()) {
+    return emitError("gatherScatterOffset must be a 1D tensor of "
+                     "int or index type");
+  }
+
+  return success();
+}
+
 void LoadOp::build(OpBuilder &b, OperationState &state, Value ptr,
                    ArrayRef<OpFoldResult> dims, Value other) {
   SmallVector<int64_t> staticDims;

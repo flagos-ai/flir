@@ -11,4 +11,5 @@ add_triton_library(TritonSharedAnalysis
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
+  Common
 )

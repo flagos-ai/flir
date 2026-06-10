@@ -24,6 +24,8 @@ Value materializeValue(OpBuilder &builder, Location loc, OpFoldResult ofr);
 // result of an operation too.
 std::optional<int64_t> getIntAttr(const OpFoldResult ofr);
 
+std::optional<int64_t> getConstValue(const OpFoldResult ofr);
+
 // Return if ofr contains a constant zero, either represented by an integer
 // attribute or a constant value.
 bool hasConstZero(const OpFoldResult ofr);
