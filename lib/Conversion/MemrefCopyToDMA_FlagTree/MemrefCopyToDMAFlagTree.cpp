@@ -25,6 +25,9 @@
 
 using namespace mlir;
 
+#define GEN_PASS_CLASSES
+#include "triton-shared/Conversion/TritonArithToLinalg/Passes.h.inc"
+
 namespace {
 struct CopyConverter : public OpConversionPattern<memref::CopyOp> {
   using OpConversionPattern<memref::CopyOp>::OpConversionPattern;

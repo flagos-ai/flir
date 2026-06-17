@@ -97,8 +97,7 @@ LogicalResult MaskState::parse(Value operand, const Location loc,
       return this->parseDivsi(op, loc, builder);
     else
       return failure();
-  }
-  else {
+  } else {
     auto resultType = operand.getType();
     if (isa<RankedTensorType>(resultType) &&
         cast<RankedTensorType>(resultType).getRank() == 1) {
