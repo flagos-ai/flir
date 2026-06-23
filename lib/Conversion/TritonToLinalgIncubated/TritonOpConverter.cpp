@@ -59,6 +59,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
 
+#include "llvm/Config/llvm-config.h"
+
 namespace TTOpConverters {
 using namespace mlir;
 using namespace triton;
@@ -875,6 +877,7 @@ SplatConverter::matchAndRewrite(triton::SplatOp op, OpAdaptor adaptor,
   return success();
 }
 
+#if LLVM_VERSION_MAJOR >= 22
 LogicalResult
 UnsplatConverter::matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter) const {
@@ -898,6 +901,7 @@ UnsplatConverter::matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
   rewriter.replaceOp(op, extractOp.getResult());
   return success();
 }
+#endif
 
 LogicalResult
 ReshapeConverter::matchAndRewrite(triton::ReshapeOp op, OpAdaptor adaptor,
@@ -2344,6 +2348,7 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
 #endif
   RankedTensorType dstType = cast<RankedTensorType>(op.getType());
 
+#if LLVM_VERSION_MAJOR >= 22
   auto lhsElemType = op.getAElemType();
   auto rhsElemType = op.getBElemType();
 
@@ -2404,6 +2409,7 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
     rewriter.replaceOp(op, finalResult);
     return success();
   }
+#endif
 
   if (!lhsScale) {
     return op.emitError("lhsScale is required for non-FP8 input");
@@ -2425,7 +2431,11 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
   Type bf16Ty = rewriter.getBF16Type();
   Type fp16Ty = rewriter.getF16Type();
   Type fp32Ty = rewriter.getF32Type();
+  #if LLVM_VERSION_MAJOR >= 22
   bool fastMath = op.getFastMath();
+#else
+  bool fastMath = false;
+#endif
 
   auto createNanSplat = [&](RankedTensorType tensorTy) -> Value {
     auto floatTy = cast<FloatType>(tensorTy.getElementType());
