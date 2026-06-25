@@ -45,6 +45,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/Config/llvm-config.h"
 
 namespace DescriptorConverter {
 using namespace mlir;
@@ -72,7 +73,9 @@ Descriptor unpackDescriptor(TensorDescType type, Value desc,
     res.strides.push_back(rewriter.createOrFold<arith::ExtSIOp>(
         makeDescOp.getLoc(), rewriter.getI64Type(), st));
   }
+  #if LLVM_VERSION_MAJOR >= 22
   res.padding = makeDescOp.getPaddingAttr();
+#endif
 
   return res;
 }
@@ -125,7 +128,9 @@ LogicalResult DescriptorLoadConverter::matchAndRewrite(
       );
   // 3. replace tt.load
   auto boundaryCheck = getFullBoundaryCheckAttr(rewriter, blockShape);
+#if LLVM_VERSION_MAJOR >= 22
   triton::PaddingOptionAttr padding = desc.padding;
+#endif
   auto cache = triton::CacheModifierAttr::get(rewriter.getContext(),
                                               triton::CacheModifier::NONE);
   auto evict = triton::EvictionPolicyAttr::get(rewriter.getContext(),
@@ -143,7 +148,13 @@ LogicalResult DescriptorLoadConverter::matchAndRewrite(
       loc, descTy.getSignlessBlockType(), tensorPtr,
       Value(), // mask
       Value(), // other
-      boundaryCheck, padding, cache, evict, isVolatile);
+      boundaryCheck,
+#if LLVM_VERSION_MAJOR >= 22
+      padding,
+#else
+      triton::PaddingOptionAttr(),
+#endif
+      cache, evict, isVolatile);
 
   rewriter.replaceOp(op, newLoad.getResult());
 
