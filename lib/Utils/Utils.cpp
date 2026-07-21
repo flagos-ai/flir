@@ -128,8 +128,12 @@ bool isOperandMemorySpaceSPM(Value operand) {
         operand = forOp.getInitArgs()[idx];
       }
     } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-      bool thenResult = isOperandMemorySpaceSPM(ifOp.thenYield().getOperand(0));
-      bool elseResult = isOperandMemorySpaceSPM(ifOp.elseYield().getOperand(0));
+      auto ifResults = ifOp.getResults();
+      auto idx = std::distance(ifResults.begin(),
+                                std::find(ifResults.begin(), ifResults.end(),
+                                          operand));
+      bool thenResult = isOperandMemorySpaceSPM(ifOp.thenYield().getOperand(idx));
+      bool elseResult = isOperandMemorySpaceSPM(ifOp.elseYield().getOperand(idx));
       assert(thenResult == elseResult &&
              "Inconsistent memory space for IfOp results: "
              "one branch uses SPM, another branch does not");

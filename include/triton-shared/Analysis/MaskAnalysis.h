@@ -85,6 +85,23 @@ struct dimInfo {
 //
 // Example of creating 2D mask:
 //  mask = (rows[:, None] < M) & (cols[None, :] < N)
+//
+// NOTE: Bool tensor mask could be saved into dims and record the dim in
+// nonContinuousDim in case that dimension failed MaskAnalysis.
+// These is to allow case where only one dimension failed while others passed. A
+// MakeGatherScatterTensorPtrOp operation could be generated for the failed
+// dimension. Only 3 patterns are supported for this.
+// 1. offsets[:, None] < n where the offsets is 1d tensor.
+//    It will in pattern of expandDims -> broadcast -> cmp
+// 2. mask[:, None] where mask is 1d bool tensor.
+//    It will in pattern of cmp -> expandDims -> broadcast
+// 3. scalar_mask[:, None] where scalar mask is scalar bool.
+//    It will in pattern of splat -> expandDims -> broadcast
+// These 3 patterns are only about how a bool tensor was created from 1D or
+// scalar bool. How the 1D and scalar bool were created is not important for the
+// unstructured mask.
+// Only one tensor mask is allowed. If multiple dimensions have failed
+// MaskAnalysis, then MaskAnalysis will still fail on the current operation.
 struct MaskState {
   OpFoldResult start;
   OpFoldResult end;
@@ -93,12 +110,23 @@ struct MaskState {
   const bool useUnsafeMask;
   ///ASCEND
   SmallVector<dimInfo> stateInfo;
-  
+
+  SmallVector<int64_t> nonContinuousDim;
   void dump() const;
 
   MaskState(bool useUnsafeMask = false) : useUnsafeMask(useUnsafeMask) {}
 
   int64_t getRank() const { return dims.size(); }
+
+  bool hasNonContinuousDim() const { return !nonContinuousDim.empty(); }
+
+  std::optional<int64_t> getNonContinuousDim() const {
+    if (hasNonContinuousDim()) {
+      assert(nonContinuousDim.size() == 1);
+      return nonContinuousDim[0];
+    }
+    return std::nullopt;
+  }
 
   bool isEmpty() const { return getRank() == 0 && !scalar && !start && !end; }
 

@@ -50,6 +50,26 @@ bool hasConstZero(const OpFoldResult ofr) {
   return false;
 }
 
+std::optional<int64_t> getConstValue(const OpFoldResult ofr) {
+  auto intAttr = getIntAttr(ofr);
+  if (intAttr.has_value()) {
+    return intAttr.value();
+  }
+
+  auto val = dyn_cast<Value>(ofr);
+  assert(val);
+  auto constOp = val.getDefiningOp<arith::ConstantOp>();
+  if (!constOp)
+    return std::nullopt;
+
+  intAttr = getIntAttr(constOp.getValue());
+  if (intAttr.has_value()) {
+    return intAttr.value();
+  } else {
+    return std::nullopt;
+  }
+}
+
 Value ofrToIndexValue(const OpFoldResult ofr, const Location loc,
                       OpBuilder &b) {
   if (Value val = dyn_cast<Value>(ofr)) {

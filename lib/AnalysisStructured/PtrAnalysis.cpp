@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
@@ -258,7 +259,7 @@ LogicalResult PtrState::mulState(const PtrState &lhsState,
   return success();
 }
 
-tts::MakeTensorPtrOp PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
+mlir::Operation* PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
                                                         Location loc) {
   SmallVector<int64_t> staticSizes;
   for (size_t i = 0; i < getRank(); i++) {
@@ -772,7 +773,7 @@ LogicalResult PtrAnalysis::rewriteAddptrOp(triton::AddPtrOp op) {
 
   if (isa<RankedTensorType>(op.getPtr().getType())) {
     auto maketptrOp = state.createTTSMakeTensorPtrOp(builder, op.getLoc());
-    ptrMap.map(op.getResult(), maketptrOp.getResult());
+    ptrMap.map(op.getResult(), maketptrOp->getResult(0));
   } else {
     // record the ptr as we have visited and built up the state for this scalar
     // pointer, which may be used by rewriteForOp later.
@@ -810,7 +811,7 @@ LogicalResult PtrAnalysis::rewriteBitcastOp(triton::BitcastOp op) {
   knownPtrs[op.getResult()] = state;
 
   auto maketptrOp = state.createTTSMakeTensorPtrOp(builder, op.getLoc());
-  ptrMap.map(op.getResult(), maketptrOp.getResult());
+  ptrMap.map(op.getResult(), maketptrOp->getResult(0));
 
   return success();
 }
@@ -825,7 +826,7 @@ LogicalResult PtrAnalysis::rewriteMakeTensorPtrOp(triton::MakeTensorPtrOp op) {
 
   auto maketptrOp = state.createTTSMakeTensorPtrOp(builder, op.getLoc());
   knownPtrs[op.getResult()] = state;
-  ptrMap.map(op.getResult(), maketptrOp.getResult());
+  ptrMap.map(op.getResult(), maketptrOp->getResult(0));
   return success();
 }
 
@@ -867,7 +868,7 @@ LogicalResult PtrAnalysis::rewriteAdvanceOp(triton::AdvanceOp op) {
 
   auto newOp = state.createTTSMakeTensorPtrOp(builder, loc);
   knownPtrs[op.getResult()] = state;
-  ptrMap.map(op.getResult(), newOp.getResult());
+  ptrMap.map(op.getResult(), newOp->getResult(0));
   return success();
 }
 
@@ -1032,7 +1033,7 @@ LogicalResult PtrAnalysis::rewriteForOp(scf::ForOp op) {
       if (state->getRank() != 0) {
         OpBuilder builder(op.getRegion());
         auto maketptrOp = state->createTTSMakeTensorPtrOp(builder, op.getLoc());
-        ptrMap.map(arg, maketptrOp.getResult());
+        ptrMap.map(arg, maketptrOp->getResult(0));
       }
     }
   }

@@ -479,13 +479,16 @@ public:
                   ptrUsers.push_back(op);
                   return success();
                 })
+                .Case<tts::MakeGatherScatterTensorPtrOp>(
+                    [&](Operation *op) { return success(); })
                 .Case<scf::ForOp>([&](scf::ForOp forOp) {
                   // Index of the init-arg corresponding to this use, note that
                   // we have to subtract by 3 from the operand number because
                   // scf.for ops always have 3 leading operands for start, end,
                   // and step.
-                  auto argIndex = use.getOperandNumber() - 3;
-                  auto init = forOp.getInitArgs()[argIndex];
+                  auto argIndex = use.getOperandNumber();
+                  auto iterArgIndex = argIndex - 3;
+                  auto init = forOp.getInitArgs()[iterArgIndex];
 
                   auto offsetInfo = offsetMap.at(init);
 
@@ -505,10 +508,10 @@ public:
                   // At this point, the IR is in an invalid state because the
                   // init-args still have tt.ptr. But at the end, we will
                   // replace all uses of the tt.ptr to offset values.
-                  auto iterArg = forOp.getRegionIterArg(argIndex);
+                  auto iterArg = forOp.getRegionIterArg(iterArgIndex);
                   iterArg.setType(offsetType);
 
-                  auto res = forOp.getResult(argIndex);
+                  auto res = forOp.getResult(iterArgIndex);
                   res.setType(offsetType);
 
                   // For other ops, we only need to push the result into the
@@ -621,8 +624,35 @@ public:
 
                   return success();
                 })
-                .Case<scf::YieldOp, scf::ConditionOp>(
-                    [](auto) { return success(); })
+                .Case<scf::YieldOp>([&](scf::YieldOp yieldOp) {
+                  auto parentOp = yieldOp->getParentOp();
+                  // Initialization seeds only ptr-like values into the
+                  // worklist. Here scf.if consumes the condition, while the ptr
+                  // is passed via scf.yield, so we match yield first.
+                  auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+                  if (!ifOp)
+                    return success();
+
+                  auto operandIndex = use.getOperandNumber();
+                  // Use the scf.if result directly as the merged value of then/else
+                  auto ifResult = ifOp.getResult(operandIndex);
+                  if (!triton::isPtrTypeLike(ifResult.getType()) ||
+                      offsetMap.contains(ifResult))
+                    return success();
+
+                  OpBuilder builder(ifOp->getContext());
+                  builder.setInsertionPointAfter(ifOp);
+                  Value zero = builder.create<arith::ConstantOp>(
+                      ifOp.getLoc(),
+                      builder.getIntegerAttr(
+                          IntegerType::get(&getContext(), defaultBitWidth), 0));
+                  PtrOffset newOffsetInfo{ifResult, ifResult.getType(),
+                                          defaultBitWidth, zero};
+                  offsetMap.insert({ifResult, newOffsetInfo});
+                  workList.push(ifResult);
+                  return success();
+                })
+                .Case<scf::ConditionOp>([](auto) { return success(); })
                 .Case<triton::CatOp>([](triton::CatOp op) {
                   op->emitError("Do not support gather / scatter with multiple "
                                 "bases yet");
