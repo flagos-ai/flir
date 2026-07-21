@@ -55,6 +55,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Config/llvm-config.h"
 #include <cassert>
 #include <set>
 
@@ -1350,8 +1351,15 @@ void BlockDataParser::rewriteCustomOp(
     resultTypes.emplace_back(ty);
   }
   auto newCustomOp =
+#if LLVM_VERSION_MAJOR >= 22
       rewriter.create<hivm::CustomOp>(loc, resultTypes, op.getName(), newInputs,
                                       newOutputs, adaptor.getTempBuffers());
+#else
+      rewriter.create<hivm::CustomOp>(loc, resultTypes,
+                                      rewriter.getStringAttr(op.getName()),
+                                      newInputs,
+                                      newOutputs);
+#endif
   auto operandSegmentSizesAttr = newCustomOp->getAttr("operandSegmentSizes");
   newCustomOp->setAttrs(op->getAttrs());
   newCustomOp->setAttr("operandSegmentSizes", operandSegmentSizesAttr);
