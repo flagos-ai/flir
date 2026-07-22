@@ -77,6 +77,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/LogicalResult.h"
 
 #ifdef __TLE_STRUCT__
@@ -626,7 +627,9 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
   patterns.add<LoadStoreConverter::AtomicCASConverter>(patterns.getContext());
   patterns.add<TTOpConverters::MakeRangeConverter>(patterns.getContext());
   patterns.add<TTOpConverters::SplatConverter>(patterns.getContext());
+#if LLVM_VERSION_MAJOR >= 22
   patterns.add<TTOpConverters::UnsplatConverter>(patterns.getContext());
+#endif
   patterns.add<TTOpConverters::ClampFConverter>(patterns.getContext());
   patterns.add<TTOpConverters::PreciseDivConverter>(patterns.getContext());
   // reduce converters
@@ -1130,10 +1133,17 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
     MemRefType syncBlockLockArgType =
         MemRefType::get(SmallVector<int64_t>(1, ShapedType::kDynamic),
                         IntegerType::get(context, 8));
+    #if LLVM_VERSION_MAJOR >= 22
     llvm::LogicalResult syncBlockLockArg =
         func.insertArgument(syncBlockLockArgIdx,      // argIndex
                             syncBlockLockArgType,     // argType
                             nullptr, func->getLoc()); // dicAttr
+    (void)syncBlockLockArg;
+#else
+    func.insertArgument(syncBlockLockArgIdx,      // argIndex
+                        syncBlockLockArgType,     // argType
+                        nullptr, func->getLoc()); // dicAttr
+#endif
     func->setAttr("SyncBlockLockArgIdx",
                   IntegerAttr::get(IntegerType::get(&getContext(), 64),
                                    0)); // 64: 64位整型
@@ -1145,10 +1155,17 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
     NamedAttribute workspaceArgAttr(StringAttr::get(context, "workspace"),
                                     UnitAttr::get(context));
 
+    #if LLVM_VERSION_MAJOR >= 22
     llvm::LogicalResult workspaceArg =
         func.insertArgument(/*argIndex*/ workspaceArgIdx,
                             /*argType*/ workspaceArgType,
                             /*dicAttr*/ nullptr, func->getLoc());
+    (void)workspaceArg;
+#else
+    func.insertArgument(/*argIndex*/ workspaceArgIdx,
+                        /*argType*/ workspaceArgType,
+                        /*dicAttr*/ nullptr, func->getLoc());
+#endif
     func->setAttr("WorkspaceArgIdx",
                   IntegerAttr::get(IntegerType::get(&getContext(), 64),
                                    1)); // 64: 64位整型

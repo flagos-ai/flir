@@ -38,6 +38,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "triton-to-linalg"
@@ -190,6 +191,7 @@ public:
                   ConversionPatternRewriter &rewriter) const override;
 };
 
+#if LLVM_VERSION_MAJOR >= 22
 class UnsplatConverter : public OpConversionPattern<triton::UnsplatOp> {
 public:
   using OpConversionPattern<triton::UnsplatOp>::OpConversionPattern;
@@ -198,6 +200,7 @@ public:
   matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
 };
+#endif
 
 class ReshapeConverter : public OpConversionPattern<triton::ReshapeOp> {
 public:
