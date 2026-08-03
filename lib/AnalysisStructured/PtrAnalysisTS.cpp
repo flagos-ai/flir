@@ -133,7 +133,8 @@ static Value applyUnstructuredMask(Operation *op, Value ptr,
           dyn_cast<Value>(nonContinuousMask),
           gatherScatterPtr.getGatherScatterDim(), gatherScatterPtr.getSizes(),
           gatherScatterPtr.getMixedStrides(),
-          gatherScatterPtr.getMixedOffsets())
+          gatherScatterPtr.getMixedOffsets(),
+          gatherScatterPtr.getMixedShape())
       .getResult();
 }
 
@@ -234,9 +235,6 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
       strides.push_back(newStride);
       continue;
     }
-    assert(!(lhsState.hasModulo() && rhsState.hasModulo()) &&
-           "PtrAnalysis: do not support adding two pointer states "
-           "that both have modulo");
 
     strides.push_back(builder.getIndexAttr(1));
     if (!lhsStructured && !rhsStructured) {
@@ -314,12 +312,18 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
 
   for (uint64_t i = 0; i < lhs->getRank(); i++) {
     if (!lhs->dimHasModulo(i)) {
-      shape.push_back(lhs->shape[i]);
+      // Inherit shape from whichever operand has modulo (or 0 if none)
+      OpFoldResult newShape = builder.getIndexAttr(0);
+      if (lhsState.dimHasModulo(i)) newShape = lhsState.shape[i];
+      if (rhsState.dimHasModulo(i)) newShape = rhsState.shape[i];
+      shape.push_back(newShape);
     } else if (hasConstZero(rhs->offsets[i])) {
       shape.push_back(lhs->shape[i]);
     } else if (i == 0 && lhs->getRank() == 2 && rhs->scalar) {
-      shape.push_back(lhs->shape[1]);
+      // Scalar increment on dim0 when dim0 has modulo: scalar is actually incrementing
+      // contiguous dim1 when using splat instead of expand_dims, keep shape as-is
       shape.push_back(lhs->shape[0]);
+      shape.push_back(lhs->shape[1]);
       LLVM_DEBUG(op->emitWarning(
           "PtrAnalysis: allowing adding pointer state with modulo in dim 0 to "
           "another pointer state with offset in dim 0.\nPlease verify the "
@@ -332,6 +336,41 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
       LLVM_DEBUG(op->emitRemark(
           "PtrAnalysis: do not support adding to operand with modulo"));
       return failure();
+    }
+  }
+  // For non-modulo cases, fill shape with 0 if not already filled
+  while (shape.size() < offsets.size()) {
+    shape.push_back(builder.getIndexAttr(0));
+  }
+
+  // When hasModulo(), emit explicit remsi on tensor offsets to bake the modulo
+  // into the offset value. The modulo boundary N is carried to codegen via the
+  // shape field of MakeGatherScatterTensorPtrOp/MakeTensorPtrOp.
+  if (hasModulo()) {
+    for (uint32_t i = 0; i < getRank(); i++) {
+      if (!dimHasModulo(i))
+        continue;
+      // Skip scalar offsets (non-tensor, e.g. constant offsets)
+      if (!isa<Value>(offsets[i]))
+        continue;
+      Value offsetTensor = cast<Value>(offsets[i]);
+      auto tensorType = dyn_cast<RankedTensorType>(offsetTensor.getType());
+      if (!tensorType)
+        continue; // scalar value, no need for element-wise mod
+
+      // shape[i] is scalar modulo boundary N
+      Value modVal = ofrToIndexValue(shape[i], loc, builder);
+      // Cast modVal to match tensor element type and splat to tensor shape
+      Type elemTy = tensorType.getElementType();
+      Value modCasted = builder.create<arith::IndexCastOp>(loc, elemTy, modVal);
+      Value modSplat = builder.create<triton::SplatOp>(loc, tensorType, modCasted);
+      // Cast offset tensor to match element type if needed
+      Value offsetCasted = offsetTensor;
+      if (offsetTensor.getType() != tensorType) {
+        offsetCasted = builder.create<arith::IndexCastOp>(loc, elemTy, offsetTensor);
+      }
+      Value remVal = builder.create<arith::RemSIOp>(loc, offsetCasted, modSplat);
+      offsets[i] = remVal;
     }
   }
 
@@ -414,9 +453,6 @@ LogicalResult PtrState::mulState(const PtrState &lhsState,
       strides.push_back(newStride);
       continue;
     }
-
-    assert(!lhs->hasModulo() &&
-           "should not have non-structured dimension with modulo");
 
     // NOTE: Can also consider mul scalar on stride
     auto lhsOffset = dyn_cast<Value>(lhs->offsets[i]);
@@ -505,12 +541,26 @@ Operation *PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
     staticSizes.push_back(s.value());
   }
 
+  // Ensure all shape (modulo boundary) scalar values are index type
+  // shape values are always scalars, never tensors
+  SmallVector<OpFoldResult> indexShapes;
+  for (auto s : shape) {
+    if (Value val = dyn_cast<Value>(s)) {
+      if (!val.getType().isIndex()) {
+        val = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), val);
+      }
+      indexShapes.push_back(val);
+    } else {
+      indexShapes.push_back(s);
+    }
+  }
+
   if (!isStructured()) {
     int nonContinuousDim = getNonStructuredDim();
     Value nonContinuousOffset = cast<Value>(offsets[nonContinuousDim]);
     auto op = builder.create<tts::MakeGatherScatterTensorPtrOp>(
         loc, source, nonContinuousOffset, nonContinuousDim, staticSizes,
-        strides, offsets);
+        strides, offsets, indexShapes);
 
     LLVM_DEBUG({
       llvm::dbgs() << "creating tts::make_gather_scatter_tensor_ptr:\n";
@@ -521,7 +571,7 @@ Operation *PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
   }
 
   auto op = builder.create<tts::MakeTensorPtrOp>(
-      loc, source, staticSizes, strides, offsets, shape, order);
+      loc, source, staticSizes, strides, offsets, indexShapes, order);
   LLVM_DEBUG({
     llvm::dbgs() << "creating tts::make_tensor_ptr:\n";
     op->dump();
@@ -642,10 +692,10 @@ LogicalResult PtrAnalysis::visitOperandDivSI(arith::DivSIOp divOp,
   }
 
   if (state.hasModulo()) {
-    LLVM_DEBUG(divOp->emitRemark(
-        "PtrAnalysis: do not support division on a state with modulo (e.g. "
-        "(x % N) / M pattern)"));
-    return failure();
+      LLVM_DEBUG(divOp->emitRemark(
+          "PtrAnalysis: do not support division on a state with modulo (e.g. "
+          "(x % N) / M pattern)"));
+      return failure();
   }
   // Apply division to offsets and strides
   auto constDiv =
@@ -668,8 +718,7 @@ LogicalResult PtrAnalysis::visitOperandDivSI(arith::DivSIOp divOp,
   }
 
   for (uint32_t i = 0; i < state.getRank(); i++) {
-    if (shape[i] == 1) {
-      assert(hasConstZero(state.offsets[i]));
+    if (shape[i] == 1 && hasConstZero(state.offsets[i])) {
       state.offsets[i] = builder.getIndexAttr(0);
       state.strides[i] = builder.getIndexAttr(0);
       continue;

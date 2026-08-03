@@ -1,5 +1,5 @@
 if(FLAGTREE_TLE_STRUCT)
-  set(TleToLinalgLib TleDSAToLinalg)
+  set(TleToLinalgLib TleToLinalg)
 endif()
 
 add_triton_library(TritonToLinalgIncubated

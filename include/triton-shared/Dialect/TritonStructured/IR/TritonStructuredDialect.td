@@ -161,6 +161,9 @@ def TTS_MakeGatherScatterTensorPtrOp
   // sizes:   Size of the data being loaded or stored.
   // strides: The strides of the parent tensor, which means how much to increase the pointer
   //          by when moving by 1 element in a specific axis.
+  // shape:   Since order is not present, this field signifies the boundary by which
+  //          addresses wrap around (constant zero indicates no wrap-around in the
+  //          corresponding dimension).
   // offsets: Offset of the block along each dimension from base.
   // result:  A tensor of pointers.
 
@@ -170,8 +173,10 @@ def TTS_MakeGatherScatterTensorPtrOp
                        DenseI64ArrayAttr:$sizes,
                        Variadic<Index>:$strides,
                        Variadic<Index>:$offsets,
+                       Variadic<Index>:$shape,
                        DenseI64ArrayAttr:$static_strides,
                        DenseI64ArrayAttr:$static_offsets,
+                       DenseI64ArrayAttr:$static_shape,
                        Optional<TT_BoolLike>:$gather_scatter_mask);
 
   let results = (outs TT_PtrLike:$result);
@@ -181,6 +186,8 @@ def TTS_MakeGatherScatterTensorPtrOp
     `gather_scatter_dim` `` `:` $gather_scatter_dim
     `gather_scatter_offset` `` `:` $gather_scatter_offset
     (`gather_scatter_mask` `` `:` $gather_scatter_mask^)?
+    `` `,` `shape` `` `:`
+    custom<DynamicIndexList>($shape, $static_shape)
     `` `,` `strides` `` `:`
     custom<DynamicIndexList>($strides, $static_strides)
     `` `,` `offsets` `` `:`
@@ -197,7 +204,8 @@ def TTS_MakeGatherScatterTensorPtrOp
       "int":$gather_scatter_dim,
       "ArrayRef<int64_t>":$sizes,
       "ArrayRef<OpFoldResult>":$strides,
-      "ArrayRef<OpFoldResult>":$offsets)>,
+      "ArrayRef<OpFoldResult>":$offsets,
+      "ArrayRef<OpFoldResult>":$shape)>,
 
     OpBuilder<(ins
       "Value":$base,
@@ -206,7 +214,8 @@ def TTS_MakeGatherScatterTensorPtrOp
       "int":$gather_scatter_dim,
       "ArrayRef<int64_t>":$sizes,
       "ArrayRef<OpFoldResult>":$strides,
-      "ArrayRef<OpFoldResult>":$offsets)>,
+      "ArrayRef<OpFoldResult>":$offsets,
+      "ArrayRef<OpFoldResult>":$shape)>,
   ];
 
   let extraClassDeclaration = [{
@@ -224,6 +233,10 @@ def TTS_MakeGatherScatterTensorPtrOp
     SmallVector<OpFoldResult> getMixedOffsets() {
       Builder b(getContext());
       return ::mlir::getMixedValues(getStaticOffsets(), getOffsets(), b);
+    }
+    SmallVector<OpFoldResult> getMixedShape() {
+      Builder b(getContext());
+      return ::mlir::getMixedValues(getStaticShape(), getShape(), b);
     }
   }];
 

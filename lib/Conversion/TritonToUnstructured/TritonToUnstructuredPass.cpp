@@ -333,8 +333,14 @@ public:
                   // We are converting a pointer to an integer here,
                   // materialized the pointer using the accumulated offset
                   // that we have stored so far.
+                  auto ptrType = offsetInfo.ptrType;
+                  Value addptrBase = offsetInfo.ptr;
+                  if (!isa<ShapedType>(addptrBase.getType()) &&
+                      isa<ShapedType>(ptrType)) {
+                    addptrBase = b.create<triton::SplatOp>(op->getLoc(), ptrType, addptrBase);
+                  }
                   auto materializedAddPtr = b.create<triton::AddPtrOp>(
-                      op->getLoc(), offsetInfo.ptrType, offsetInfo.ptr,
+                      op->getLoc(), ptrType, addptrBase,
                       offsetInfo.offset);
 
                   // Change the op to use the "simplified" pointer above.
@@ -342,7 +348,6 @@ public:
                   // We will need to revisit how we process the IRs in this pass
                   // later.
                   op->setOperand(0, materializedAddPtr);
-
                   return success();
                 })
                 .Case<triton::BitcastOp>([&](triton::BitcastOp bitcast) {
@@ -363,19 +368,21 @@ public:
                       isa<RankedTensorType>(srcPtrType)
                           ? cast<RankedTensorType>(srcPtrType).getElementType()
                           : srcPtrType;
-                  assert(((cast<triton::PointerType>(srcType)
-                               .getPointeeType()
-                               .isInteger(1) &&
-                           cast<triton::PointerType>(resType)
-                               .getPointeeType()
-                               .isInteger(8)) ||
-                          (cast<triton::PointerType>(srcType)
-                               .getPointeeType()
-                               .isInteger(8) &&
-                           cast<triton::PointerType>(resType)
-                               .getPointeeType()
-                               .isInteger(1))) &&
-                         "only bitcast between i1 and i8 pointer is supported");
+                  auto srcPointeeType =
+                      cast<triton::PointerType>(srcType).getPointeeType();
+                  auto resPointeeType =
+                      cast<triton::PointerType>(resType).getPointeeType();
+                  bool sameWidth =
+                      srcPointeeType.isIntOrFloat() &&
+                      resPointeeType.isIntOrFloat() &&
+                      srcPointeeType.getIntOrFloatBitWidth() ==
+                          resPointeeType.getIntOrFloatBitWidth();
+                  bool i1i8 = (srcPointeeType.isInteger(1) &&
+                               resPointeeType.isInteger(8)) ||
+                              (srcPointeeType.isInteger(8) &&
+                               resPointeeType.isInteger(1));
+                  assert((sameWidth || i1i8) &&
+                         "unsupported pointer bitcast");
                   auto newBitcast =
                       b.create<triton::BitcastOp>(loc, resType, offsetInfo.ptr);
                   bitcast->replaceAllUsesWith(newBitcast);
@@ -700,32 +707,6 @@ public:
                 b.create<tts::ScatterOp>(loc, offsetInfo.ptr, offsetInfo.offset,
                                          store.getValue(), store.getMask());
                 store->erase();
-                return success();
-              })
-              .Case<triton::AtomicRMWOp>([&](triton::AtomicRMWOp atomicOp) {
-                // AtomicRMWOp 的 ptr 操作数已经被 processUnstructuredPtrs
-                // 分析过， 我们只需把它的 ptr 替换成 base ptr（偏移量累积到
-                // offset 里）， 然后交给 Phase-2 的 AtomicRMWConverter 处理。
-                //
-                // 策略：用 tts::GatherOp 的 base/offset 拆分方式同理——
-                // 把 atomicRmw 的 ptr 操作数替换成 offsetMap 里的 base ptr，
-                // 并在前面插入 tt.addptr 把 offset 加回去，让 converter
-                // 看到正确的 ptr。
-                auto offsetInfo = offsetMap.at(atomicOp.getPtr());
-                // 用累积的 offset 重建一个 addptr，作为 atomic 的新 ptr。
-                // （converter 会把这个 addptr 的结果再转成 memref）
-                auto newPtr = b.create<triton::AddPtrOp>(
-                    loc, atomicOp.getPtr().getType(), offsetInfo.ptr,
-                    offsetInfo.offset);
-                atomicOp.getPtrMutable().set(newPtr);
-                return success();
-              })
-              .Case<triton::AtomicCASOp>([&](triton::AtomicCASOp casOp) {
-                auto offsetInfo = offsetMap.at(casOp.getPtr());
-                auto newPtr = b.create<triton::AddPtrOp>(
-                    loc, casOp.getPtr().getType(), offsetInfo.ptr,
-                    offsetInfo.offset);
-                casOp.getPtrMutable().set(newPtr);
                 return success();
               })
               .Case<triton::MakeTensorPtrOp,

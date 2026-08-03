@@ -27,7 +27,6 @@
 using namespace mlir;
 #define GEN_PASS_CLASSES
 #include "triton-shared/Conversion/NoBufferize_FlagTree/Passes.h.inc"
-#include "triton-shared/Conversion/TritonArithToLinalg/Passes.h.inc"
 
 namespace {
 struct NoBufferizeConverter : public RewritePattern {

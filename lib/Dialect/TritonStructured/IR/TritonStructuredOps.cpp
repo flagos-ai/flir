@@ -136,17 +136,19 @@ void MakeGatherScatterTensorPtrOp::build(OpBuilder &b, OperationState &state,
                                          int gatherScatterDim,
                                          ArrayRef<int64_t> sizes,
                                          ArrayRef<OpFoldResult> strides,
-                                         ArrayRef<OpFoldResult> offsets) {
+                                         ArrayRef<OpFoldResult> offsets,
+                                         ArrayRef<OpFoldResult> shape) {
   build(b, state, base, gatherScatterOffset, Value(), gatherScatterDim, sizes,
-        strides, offsets);
+        strides, offsets, shape);
 }
 
 void MakeGatherScatterTensorPtrOp::build(
     OpBuilder &b, OperationState &state, Value base, Value gatherScatterOffset,
     Value gatherScatterMask, int gatherScatterDim, ArrayRef<int64_t> sizes,
-    ArrayRef<OpFoldResult> strides, ArrayRef<OpFoldResult> offsets) {
-  SmallVector<int64_t> staticStrides, staticOffsets;
-  SmallVector<Value> dynamicStrides, dynamicOffsets;
+    ArrayRef<OpFoldResult> strides, ArrayRef<OpFoldResult> offsets,
+    ArrayRef<OpFoldResult> shape) {
+  SmallVector<int64_t> staticStrides, staticOffsets, staticShape;
+  SmallVector<Value> dynamicStrides, dynamicOffsets, dynamicShape;
   for (auto [i, offset] : llvm::enumerate(offsets)) {
     if (i != gatherScatterDim)
       dispatchIndexOpFoldResult(offset, dynamicOffsets, staticOffsets);
@@ -154,6 +156,7 @@ void MakeGatherScatterTensorPtrOp::build(
       staticOffsets.push_back(0);
   }
   dispatchIndexOpFoldResults(strides, dynamicStrides, staticStrides);
+  dispatchIndexOpFoldResults(shape, dynamicShape, staticShape);
 
   auto basePtr = cast<triton::PointerType>(base.getType());
   auto elemType = basePtr.getPointeeType();
@@ -162,8 +165,10 @@ void MakeGatherScatterTensorPtrOp::build(
 
   build(b, state, resType, base, gatherScatterOffset,
         b.getI32IntegerAttr(gatherScatterDim), b.getDenseI64ArrayAttr(sizes),
-        dynamicStrides, dynamicOffsets, b.getDenseI64ArrayAttr(staticStrides),
-        b.getDenseI64ArrayAttr(staticOffsets), gatherScatterMask);
+        dynamicStrides, dynamicOffsets, dynamicShape,
+        b.getDenseI64ArrayAttr(staticStrides),
+        b.getDenseI64ArrayAttr(staticOffsets),
+        b.getDenseI64ArrayAttr(staticShape), gatherScatterMask);
 }
 
 LogicalResult MakeGatherScatterTensorPtrOp::verify() {
@@ -172,11 +177,12 @@ LogicalResult MakeGatherScatterTensorPtrOp::verify() {
     return emitError("gatherScatterDim is out of bounds");
   }
 
-  // Verify that the sizes, strides, and offsets have compatible dimensions.
+  // Verify that the sizes, strides, offsets, and shape have compatible dimensions.
   if (getMixedSizes().size() != getMixedStrides().size() ||
-      getMixedSizes().size() != getMixedOffsets().size()) {
+      getMixedSizes().size() != getMixedOffsets().size() ||
+      getMixedSizes().size() != getMixedShape().size()) {
     return emitError(
-        "sizes, strides, and offsets must have the same number of dimensions");
+        "sizes, strides, offsets, and shape must have the same number of dimensions");
   }
 
   Type offsetType = getGatherScatterOffset().getType();
