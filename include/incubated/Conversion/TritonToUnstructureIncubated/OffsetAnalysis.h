@@ -273,6 +273,12 @@ void parseCustomOp(hivm::CustomOp op, const Location &loc,
                    RewriterBase &rewriter,
                    llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap,
                    unsigned resultIdx);
+#if __TLE_STRUCT__
+void parseTleDistSymmAtOp(Operation *tleOp, const Location &loc,
+                          RewriterBase &rewriter,
+                          llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap,
+                          unsigned resultIdx);
+#endif
 } // namespace triton
 
 } // namespace mlir

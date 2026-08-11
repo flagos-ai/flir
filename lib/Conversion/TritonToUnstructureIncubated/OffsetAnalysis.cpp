@@ -33,6 +33,10 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
+#if __TLE_STRUCT__
+#include "tle/dsa/dialect/include/IR/Dialect.h"
+#endif
+
 #define DEBUG_TYPE "triton-offset-analysis"
 
 namespace mlir {
@@ -229,6 +233,13 @@ void parse(Value operand, const Location &loc, RewriterBase &rewriter,
       parseArithOp(defOp, loc, rewriter, offsetMap);
     } else if (isa<triton::TritonDialect>(defOp->getDialect())) {
       parseTritonOp(defOp, loc, rewriter, offsetMap);
+#if __TLE_STRUCT__
+    } else if (auto symmAtOp = dyn_cast<triton::tle::SymmAtOp>(defOp)) {
+      auto opResult = dyn_cast<OpResult>(operand);
+      assert(opResult && "Expected operand to be an OpResult");
+      unsigned resultIdx = opResult.getResultNumber();
+      parseTleDistSymmAtOp(symmAtOp, loc, rewriter, offsetMap, resultIdx);
+#endif
     } else {
       if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
         parseIf(ifOp, loc, rewriter, offsetMap, operand);
@@ -1157,6 +1168,57 @@ void parseIntToPtr(triton::IntToPtrOp op, const Location &loc,
   offsetMap[dst] = PtrOffsetInfo(dst);
   offsetMap[dst].setScalarLike(true);
 }
+
+#if __TLE_STRUCT__
+void parseTleDistSymmAtOp(Operation *distOp, const Location &loc,
+                          RewriterBase &rewriter,
+                          llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap,
+                          unsigned int resultIdx) {
+  // scalar ptr:     base pointer + zero offset (broadcastable rank-0)
+  // integer:        offset value
+  // tensor<tt.ptr>: if the op carries SrcPtrIndex, inherit the full
+  //                 offset/structured info of the mapped input operand
+  //                 (keeps stride/mask alignment); otherwise error.
+  // other tensor:   unstructured with the tensor rank.
+  for (auto operand : distOp->getOperands()) {
+    parse(operand, loc, rewriter, offsetMap);
+  }
+  Value dst = distOp->getResult(resultIdx);
+  offsetMap[dst] = PtrOffsetInfo();
+  auto tensorType = dyn_cast<RankedTensorType>(dst.getType());
+  if (!tensorType) {
+    if (isa<triton::PointerType>(dst.getType())) {
+      offsetMap[dst].setPtr(dst);
+      offsetMap[dst].setZeroOffset();
+    } else if (isa<IntegerType>(dst.getType())) {
+      offsetMap[dst].setOffset(dst);
+    } else {
+      emitError(loc) << "Unsupported return type for tle dist op: "
+                     << dst.getType();
+    }
+    return;
+  }
+  if (llvm::isa<triton::PointerType>(tensorType.getElementType())) {
+    if (checkStructureAnnotated(distOp, rewriter)) {
+      auto srcValArrayAttr = distOp->getAttrOfType<DenseI32ArrayAttr>(
+          ConverterUtils::customSrcPtrIndexAttrName);
+      assert(srcValArrayAttr &&
+             "structure tle dist op should present src tensor<tt.ptr>");
+      auto srcValArray = srcValArrayAttr.asArrayRef();
+      assert(srcValArray[resultIdx] != -1 &&
+             "tensor<tt.ptr> result should map to src tensor<tt.ptr>");
+      auto srcOffsetInfo =
+          offsetMap[distOp->getOperand(srcValArray[resultIdx])];
+      offsetMap[dst] = srcOffsetInfo;
+      return;
+    }
+    emitError(loc)
+        << "Unsupported unstructure RankedTensor of tt.ptr for tle dist: "
+        << dst;
+  }
+  offsetMap[dst].setUnstructured(tensorType.getRank());
+}
+#endif
 
 void parseCustomOp(hivm::CustomOp op, const Location &loc,
                    RewriterBase &rewriter,
