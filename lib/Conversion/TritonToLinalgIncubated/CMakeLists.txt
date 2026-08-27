@@ -15,6 +15,7 @@ add_triton_library(TritonToLinalgIncubated
         ImplicitPermute.cpp
         DescriptorConverter.cpp
         MarkTensorKindPass.cpp
+        ReduceSumStrengthPass.cpp
 
   DEPENDS
   TritonToLinalgIncubatedConversionPassIncGen
