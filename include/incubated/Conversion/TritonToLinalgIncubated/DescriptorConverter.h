@@ -35,6 +35,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Debug.h"
 
 namespace DescriptorConverter {
@@ -45,7 +46,9 @@ struct Descriptor {
   Value base;
   SmallVector<Value> shape;
   SmallVector<Value> strides;
+#if LLVM_VERSION_MAJOR >= 22
   triton::PaddingOptionAttr padding;
+#endif
 };
 
 bool hasATensorDescriptorType(mlir::TypeRange types);
