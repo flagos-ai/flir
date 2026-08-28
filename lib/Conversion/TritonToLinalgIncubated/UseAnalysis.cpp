@@ -33,6 +33,7 @@
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
@@ -335,7 +336,7 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
         }
       }
       if (!isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-               triton::ReduceOp>(op)) {
+               triton::ReduceOp, hivm::CustomOp>(op)) {
         // Side-effect-only ops (e.g. memref.copy) have 0 results and cannot
         // be tagged for meta computation; treat them as no-ops for analysis.
         if (op->getNumResults() == 0)
@@ -449,6 +450,15 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
 
     if (isa<triton::LoadOp>(op))
       return;
+
+#ifdef __TLE_STRUCT__
+    // Cloning a memref allocation produces a second, distinct buffer: the
+    // meta users (address-style subview/copy chains) would write the clone
+    // while the data users (bufferization.to_tensor readers) keep reading
+    // the original, silently splitting the dataflow. Keep allocations whole.
+    if (isa<memref::AllocOp>(op))
+      return;
+#endif
 
     // Clone the operation; switch all meta users to use the clone
     OpBuilder builder(op);
