@@ -92,7 +92,14 @@ def TPTR_TypeOffsetOp : TPTR_Op<"type_offset", [ConstantLike, Pure]> {
 
   let arguments = (ins TypeAttr:$baseType);
   let results = (outs AnySignlessIntegerOrIndex:$result);
-  // There are no builders with llvm 22
+  // ODS does not emit this builder under LLVM >= 22 (see the commented-out
+  // `builders` below); it is declared here and defined by hand in TPtrOps.cpp.
+  let extraClassDeclaration = [{
+    static void build(::mlir::OpBuilder &odsBuilder,
+                      ::mlir::OperationState &odsState,
+                      ::mlir::TypeAttr baseType,
+                      ::mlir::Type resultTy = nullptr);
+  }];
   // let builders = [
   //   OpBuilder<(ins "TypeAttr":$baseType, CArg<"Type", "nullptr">:$resultTy)>
   // ];
