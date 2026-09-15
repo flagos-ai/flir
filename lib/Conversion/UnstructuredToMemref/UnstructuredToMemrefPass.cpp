@@ -104,7 +104,7 @@ struct ScalarLoadConverter : public OpConversionPattern<tts::GatherOp> {
     auto zeroMap = AffineMap::getConstantMap(0, rewriter.getContext());
 
     auto scalarLoadOp = rewriter.create<affine::AffineLoadOp>(
-#if LLVM_VERSION_MAJOR >= 22
+#if (__TRITON_VERSION_MAJOR__ * 100 + __TRITON_VERSION_MINOR__) >= 306
         loc, memref, zeroMap, ValueRange());
 #else
         loc, memref, zeroMap, std::nullopt);
@@ -159,7 +159,7 @@ struct ScalarStoreConverter : public OpConversionPattern<tts::ScatterOp> {
 #else
     auto zeroMap = AffineMap::getConstantMap(0, rewriter.getContext());
 
-#if LLVM_VERSION_MAJOR >= 22
+#if (__TRITON_VERSION_MAJOR__ * 100 + __TRITON_VERSION_MINOR__) >= 306
     rewriter.create<affine::AffineStoreOp>(loc, storeVal, memref, zeroMap,
                                            ValueRange());
 #else
