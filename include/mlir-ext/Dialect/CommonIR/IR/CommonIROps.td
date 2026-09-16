@@ -426,7 +426,7 @@ def CommonIR_CastOp : CommonIR_Op<"cast", [Pure]> {
 // ---------------------------------------------------------------------------
 // tile.to_tensor — Convert a buffer to an immutable tensor view
 // ---------------------------------------------------------------------------
-def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [Pure]> {
+def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor"> {
   let summary = "Convert a buffer to a ranked tensor value";
   let description = [{
     Materializes a buffer as a standard ranked tensor so it can feed Triton
