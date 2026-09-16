@@ -138,7 +138,7 @@ def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSiz
 // ---------------------------------------------------------------------------
 // tile.copy — Copy data between memory regions with layout conversion
 // ---------------------------------------------------------------------------
-def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Copy data between memory regions with optional layout conversion";
   let description = [{
     Copies data from source to destination, optionally performing layout
@@ -169,7 +169,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
 // ---------------------------------------------------------------------------
 // tile.load — Load data from GM to local memory
 // ---------------------------------------------------------------------------
-def CommonIR_LoadOp : CommonIR_Op<"load", [Pure, MemoryEffects<[MemRead]>]> {
+def CommonIR_LoadOp : CommonIR_Op<"load", [MemoryEffects<[MemRead]>]> {
   let summary = "Load data from global memory to local memory";
   let description = [{
     Loads a tensor from a GM pointer into the specified destination memory
@@ -196,7 +196,7 @@ def CommonIR_LoadOp : CommonIR_Op<"load", [Pure, MemoryEffects<[MemRead]>]> {
 // ---------------------------------------------------------------------------
 // tile.store — Store data from local memory to GM
 // ---------------------------------------------------------------------------
-def CommonIR_StoreOp : CommonIR_Op<"store", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_StoreOp : CommonIR_Op<"store", [MemoryEffects<[MemWrite]>]> {
   let summary = "Store data from local memory to global memory";
   let description = [{
     Stores a tensor from local memory (e.g., UB) to a GM pointer destination.
@@ -225,7 +225,7 @@ def CommonIR_StoreOp : CommonIR_Op<"store", [Pure, MemoryEffects<[MemWrite]>]> {
 // ---------------------------------------------------------------------------
 // tile.vec_fill — Fill a buffer with a scalar value (Vector engine)
 // ---------------------------------------------------------------------------
-def CommonIR_VecFillOp : CommonIR_Op<"vec_fill", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_VecFillOp : CommonIR_Op<"vec_fill", [MemoryEffects<[MemWrite]>]> {
   let summary = "Fill a buffer with a scalar value on the Vector engine";
   let description = [{
     Initializes a buffer by broadcasting a scalar value. Typically used to
@@ -253,7 +253,7 @@ def CommonIR_VecFillOp : CommonIR_Op<"vec_fill", [Pure, MemoryEffects<[MemWrite]
 // ---------------------------------------------------------------------------
 // tile.cube_launch — Async matrix multiply on Cube engine
 // ---------------------------------------------------------------------------
-def CommonIR_CubeLaunchOp : CommonIR_Op<"cube_launch", [MemoryEffects<[MemWrite]>]> {
+def CommonIR_CubeLaunchOp : CommonIR_Op<"cube_launch", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Launch async matrix multiply on the Cube engine";
   let description = [{
     Asynchronously launches a matrix multiplication on the Cube engine.
@@ -426,7 +426,7 @@ def CommonIR_CastOp : CommonIR_Op<"cast", [Pure]> {
 // ---------------------------------------------------------------------------
 // tile.to_tensor — Convert a buffer to an immutable tensor view
 // ---------------------------------------------------------------------------
-def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [Pure]> {
+def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [MemoryEffects<[MemRead]>]> {
   let summary = "Convert a buffer to a ranked tensor value";
   let description = [{
     Materializes a buffer as a standard ranked tensor so it can feed Triton
@@ -451,7 +451,7 @@ def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [Pure]> {
 // ---------------------------------------------------------------------------
 // tile.store_tensor — Store a tensor into a buffer
 // ---------------------------------------------------------------------------
-def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [MemoryEffects<[MemWrite]>]> {
   let summary = "Store a tensor value into a buffer";
   let description = [{
     Writes a tensor value back into a mutable buffer. Inverse of
