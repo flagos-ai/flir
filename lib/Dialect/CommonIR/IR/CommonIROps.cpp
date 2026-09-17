@@ -53,6 +53,98 @@ LogicalResult GmOffsetOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult CopyOp::verify() {
+  auto srcOffsets = getSrcOffsets();
+  auto dstOffsets = getDstOffsets();
+  auto sizes = getSizes();
+
+  if ((!srcOffsets.empty() || !dstOffsets.empty()) && !sizes)
+    return emitOpError("slice copy requires 'sizes' attribute");
+
+  if (sizes) {
+    auto numDims = sizes->size();
+    if (!srcOffsets.empty() && srcOffsets.size() != numDims)
+      return emitOpError("src_offsets count (")
+             << srcOffsets.size() << ") must match sizes rank (" << numDims
+             << ")";
+    if (!dstOffsets.empty() && dstOffsets.size() != numDims)
+      return emitOpError("dst_offsets count (")
+             << dstOffsets.size() << ") must match sizes rank (" << numDims
+             << ")";
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CopyOp — custom assembly format
+//
+//   tile.copy %src -> %dst
+//       [src_offsets [%a, %b] dst_offsets [%c, %d]]
+//       {attrs} : type($src), type($dst)
+//===----------------------------------------------------------------------===//
+
+void CopyOp::print(OpAsmPrinter &p) {
+  p << ' ' << getSrc() << " -> " << getDst();
+  if (!getSrcOffsets().empty()) {
+    p << " src_offsets [";
+    llvm::interleaveComma(getSrcOffsets(), p,
+                          [&](Value v) { p.printOperand(v); });
+    p << "]";
+  }
+  if (!getDstOffsets().empty()) {
+    p << " dst_offsets [";
+    llvm::interleaveComma(getDstOffsets(), p,
+                          [&](Value v) { p.printOperand(v); });
+    p << "]";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          {"operandSegmentSizes"});
+  p << " : " << getSrc().getType() << ", " << getDst().getType();
+}
+
+ParseResult CopyOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src, dst;
+  Type srcType, dstType;
+
+  if (parser.parseOperand(src) || parser.parseArrow() ||
+      parser.parseOperand(dst))
+    return failure();
+
+  // Parse optional src_offsets [...]
+  SmallVector<OpAsmParser::UnresolvedOperand> srcOffsets, dstOffsets;
+  if (succeeded(parser.parseOptionalKeyword("src_offsets"))) {
+    if (parser.parseLSquare() ||
+        parser.parseOperandList(srcOffsets) ||
+        parser.parseRSquare())
+      return failure();
+  }
+
+  // Parse optional dst_offsets [...]
+  if (succeeded(parser.parseOptionalKeyword("dst_offsets"))) {
+    if (parser.parseLSquare() ||
+        parser.parseOperandList(dstOffsets) ||
+        parser.parseRSquare())
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(srcType) || parser.parseComma() ||
+      parser.parseType(dstType))
+    return failure();
+
+  // Resolve operands
+  auto indexType = parser.getBuilder().getIndexType();
+  if (parser.resolveOperand(src, srcType, result.operands) ||
+      parser.resolveOperand(dst, dstType, result.operands) ||
+      parser.resolveOperands(srcOffsets, indexType, result.operands) ||
+      parser.resolveOperands(dstOffsets, indexType, result.operands))
+    return failure();
+
+  // Set operand segment sizes: [src, dst, src_offsets, dst_offsets]
+  result.addAttribute(
+      "operandSegmentSizes",
+      parser.getBuilder().getDenseI32ArrayAttr(
+          {1, 1, static_cast<int32_t>(srcOffsets.size()),
+           static_cast<int32_t>(dstOffsets.size())}));
   return success();
 }
 

@@ -138,22 +138,36 @@ def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSiz
 // ---------------------------------------------------------------------------
 // tile.copy — Copy data between memory regions with layout conversion
 // ---------------------------------------------------------------------------
-def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> {
-  let summary = "Copy data between memory regions with optional layout conversion";
+def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemWrite]>,
+                                            AttrSizedOperandSegments]> {
+  let summary = "Copy data between memory regions with optional slice and layout conversion";
   let description = [{
     Copies data from source to destination, optionally performing layout
     conversion (e.g., ND→NZ for Cube operands) and transpose.
 
-    Example:
+    Supports optional slice semantics: when `src_offsets` / `dst_offsets` are
+    provided, only the region starting at the given offsets with extent `sizes`
+    is copied.  Without offsets the op behaves as a full-buffer copy (backward
+    compatible).
+
+    Examples:
     ```mlir
-    tile.copy %src → %dst {engine=#tile.mte2, src_layout=#tile.nd,
+    // Full copy (backward compatible)
+    tile.copy %src -> %dst {engine=#tile.mte2, src_layout=#tile.nd,
                dst_layout=#tile.nz<16,16>, transpose=true}
+
+    // Slice copy: copy [128,64] starting at [%m, %k] in src to [0,0] in dst
+    tile.copy %src -> %dst src_offsets [%m, %k] sizes [128, 64]
+               : !tt.ptr<f16>, !tile.buf<[128,128],f16,l1>
     ```
   }];
 
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
+    Variadic<Index>:$src_offsets,
+    Variadic<Index>:$dst_offsets,
+    OptionalAttr<I64ArrayAttr>:$sizes,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_NZLayoutAttr>:$dst_nz_layout,
@@ -161,9 +175,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
     OptionalAttr<StrAttr>:$comment
   );
 
-  let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ---------------------------------------------------------------------------
