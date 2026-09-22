@@ -39,6 +39,7 @@
 #if __has_include("bishengir/Dialect/HFusion/IR/HFusion.h")
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #endif
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -816,6 +817,51 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   compileOn91095Flag = this->compileOn91095;
 
   auto moduleOp = getOperation();
+  bool hasL2Disable = false;
+  moduleOp.walk([&](Operation *op) {
+    auto load = dyn_cast<triton::LoadOp>(op);
+    auto store = dyn_cast<triton::StoreOp>(op);
+    if ((load && load.getCache() == triton::CacheModifier::L2_DISABLE) ||
+        (store && store.getCache() ==
+                      triton::CacheModifier::L2_DISABLE))
+      hasL2Disable = true;
+
+    // compile_hint and TLE copy carry the same semantic mode as an
+    // operation attribute, so target validation must cover those routes too.
+    if (auto mode = op->getAttrOfType<IntegerAttr>("l2_cache_mode"))
+      hasL2Disable |= mode.getInt() == 4;
+  });
+  if (hasL2Disable) {
+    auto target = moduleOp->getAttrOfType<hacc::TargetAttr>(
+        hacc::TargetAttr::name);
+    if (!target) {
+      moduleOp.emitError("cannot determine whether .l2_disable is "
+                         "supported because hacc.target is missing");
+      signalPassFailure();
+      return;
+    }
+    StringRef device = target.getTarget().getValue();
+    bool supported = device.starts_with("Ascend910B") ||
+                     device.starts_with("Ascend910_93") ||
+                     device.starts_with("Ascend950");
+    if (!supported) {
+      moduleOp.walk([&](Operation *op) {
+        auto load = dyn_cast<triton::LoadOp>(op);
+        auto store = dyn_cast<triton::StoreOp>(op);
+        if ((load && load.getCache() ==
+                         triton::CacheModifier::L2_DISABLE) ||
+            (store && store.getCache() ==
+                          triton::CacheModifier::L2_DISABLE) ||
+            (op->getAttrOfType<IntegerAttr>("l2_cache_mode") &&
+             op->getAttrOfType<IntegerAttr>("l2_cache_mode").getInt() == 4))
+          op->emitOpError("cache modifier .l2_disable is only supported "
+                          "on Ascend 910B, 910C, and 950; target is ")
+              << device;
+      });
+      signalPassFailure();
+      return;
+    }
+  }
 
   // Check if the kernel contains tl.dot. Without tl.dot,
   // the kernel would be pure AIV kernel.

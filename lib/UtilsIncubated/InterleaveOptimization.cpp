@@ -369,6 +369,16 @@ LogicalResult DeinterleaveStatusWithMaskOptimization(
 
 LogicalResult
 InterleaveStatusOptimization(SmallVector<Operation *> materializeVec) {
+  auto firstL2CacheMode =
+      materializeVec[0]->getAttrOfType<IntegerAttr>("l2_cache_mode");
+  auto secondL2CacheMode =
+      materializeVec[1]->getAttrOfType<IntegerAttr>("l2_cache_mode");
+  if (static_cast<bool>(firstL2CacheMode) !=
+          static_cast<bool>(secondL2CacheMode) ||
+      (firstL2CacheMode && firstL2CacheMode.getValue() !=
+                               secondL2CacheMode.getValue()))
+    return failure();
+
   OpBuilder builder(materializeVec[1]);
   auto loc = materializeVec[1]->getLoc();
 
@@ -504,6 +514,10 @@ InterleaveStatusOptimization(SmallVector<Operation *> materializeVec) {
       loc, insertSecond.getResult(), newCastOp.getResult());
   // Setting writable is necessary as dst is memref type
   newStoreOp.setWritable(true);
+  if (firstL2CacheMode) {
+    newCastOp->setAttr("l2_cache_mode", firstL2CacheMode);
+    newStoreOp->setAttr("l2_cache_mode", firstL2CacheMode);
+  }
 
   // 6. Erase origin materialization
   materializeVec[0]->erase();
@@ -514,6 +528,16 @@ InterleaveStatusOptimization(SmallVector<Operation *> materializeVec) {
 
 LogicalResult
 InterleaveStatusWithMaskOptimization(SmallVector<Operation *> materializeVec) {
+  auto firstL2CacheMode =
+      materializeVec[0]->getAttrOfType<IntegerAttr>("l2_cache_mode");
+  auto secondL2CacheMode =
+      materializeVec[1]->getAttrOfType<IntegerAttr>("l2_cache_mode");
+  if (static_cast<bool>(firstL2CacheMode) !=
+          static_cast<bool>(secondL2CacheMode) ||
+      (firstL2CacheMode && firstL2CacheMode.getValue() !=
+                               secondL2CacheMode.getValue()))
+    return failure();
+
   OpBuilder builder(materializeVec[1]);
 
   auto firstSubviewOpOfReCast =
@@ -702,6 +726,11 @@ InterleaveStatusWithMaskOptimization(SmallVector<Operation *> materializeVec) {
       loc, newSrcExtractSlice.getResult(), newSubviewOpOfReCast.getResult());
   // Setting writable is necessary as dst is memref type
   newStoreOp.setWritable(true);
+  if (firstL2CacheMode) {
+    newCastOp->setAttr("l2_cache_mode", firstL2CacheMode);
+    newSubviewOpOfReCast->setAttr("l2_cache_mode", firstL2CacheMode);
+    newStoreOp->setAttr("l2_cache_mode", firstL2CacheMode);
+  }
 
   // 8. Erase origin operation
   materializeVec[0]->erase();
