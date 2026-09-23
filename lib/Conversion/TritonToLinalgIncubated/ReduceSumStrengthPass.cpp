@@ -162,8 +162,7 @@ public:
 };
 
 class ReduceSumStrengthPass
-    : public ::impl::ReduceSumStrengthBase<
-          ReduceSumStrengthPass> {
+    : public ::impl::ReduceSumStrengthBase<ReduceSumStrengthPass> {
 public:
   using ::impl::ReduceSumStrengthBase<
       ReduceSumStrengthPass>::ReduceSumStrengthBase;
@@ -195,8 +194,8 @@ mlir::triton::Incubated::createReduceSumStrengthPass() {
 }
 
 std::unique_ptr<OperationPass<ModuleOp>>
-mlir::triton::Incubated::createReduceSumStrengthPass(
-    bool enable, int32_t splitFactor) {
+mlir::triton::Incubated::createReduceSumStrengthPass(bool enable,
+                                                     int32_t splitFactor) {
   ReduceSumStrengthOptions opts;
   opts.enable = enable;
   opts.splitFactor = splitFactor;
