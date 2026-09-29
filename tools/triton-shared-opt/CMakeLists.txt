@@ -7,6 +7,7 @@ add_llvm_executable(triton-shared-opt triton-shared-opt.cpp PARTIAL_SOURCES_INTE
 llvm_update_compile_flags(triton-shared-opt)
 target_link_libraries(triton-shared-opt PRIVATE
   TritonTransforms
+  LaneVectorize
   TritonSharedAnalysis
   ${dialect_libs}
   ${conversion_libs}
