@@ -47,11 +47,8 @@ def TritonLaneVectorize : Pass<"triton-lane-vectorize", "mlir::ModuleOp"> {
     }
     ```
 
-    Two modes share one packer: loop mode packs the same-typed tensor
-    iter_args of an scf.for and replays its body once; block mode (SLP)
-    discovers a lane cone in straight-line code, seeded by a tensor.concat
-    packing boundary or by shallow structural signatures refined by operand
-    congruence.
+    Loop mode packs the same-typed tensor iter_args of an scf.for and replays
+    its body once.
 
     Matching is structural rather than semantic: an operation is lifted when
     each of its per-lane instances computes the same math and its operands are
@@ -62,8 +59,7 @@ def TritonLaneVectorize : Pass<"triton-lane-vectorize", "mlir::ModuleOp"> {
 
     Effectful ops (loads/stores/copies/barriers), pointer/buffer/memref/token
     types, arith.select and tt.reshape with allow_reorder are deliberately NOT
-    packed; integer/index cones that feed memory addresses are also rejected
-    (see isAddressProducer). See the file header for the rationale.
+    packed. See the file header for the rationale.
   }];
 
   let dependentDialects = ["mlir::arith::ArithDialect",
