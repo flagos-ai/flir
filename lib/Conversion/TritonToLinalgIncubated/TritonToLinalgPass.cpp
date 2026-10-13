@@ -1002,6 +1002,8 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
 
   moduleOp.walk([&](hivm::PointerCastOp op) { castOps.push_back(op); });
 
+  SmallVector<memref::ReinterpretCastOp> rewrittenCasts;
+
   for (auto op : castOps) {
     SmallVector<Operation *> userOps(op->getUsers().begin(),
                                      op->getUsers().end());
@@ -1077,17 +1079,38 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
                                                    hivm::AddressSpace::GM)});
       auto oldMemrefType =
           cast<MemRefType>(reinterpretCastOp.getResult().getType());
+      // The pointer offset has been folded into `realAddr`, so the rebuilt
+      // memref starts at offset 0.  This must match the op's static offset (0)
+      // and the absence of a dynamic offset operand: declaring a dynamic
+      // layout offset here yields a malformed reinterpret_cast.
       auto newMemrefType = MemRefType::get(
           oldMemrefType.getShape(), oldMemrefType.getElementType(),
-          StridedLayoutAttr::get(&getContext(), ShapedType::kDynamic,
-                                 staticStrides));
-      rewriter.replaceOpWithNewOp<memref::ReinterpretCastOp>(
-          reinterpretCastOp, newMemrefType, newCastOp, ValueRange({}),
-          reinterpretCastOp.getSizes(), reinterpretCastOp.getStrides(),
-          SmallVector<int64_t>({0}), reinterpretCastOp.getStaticSizes(),
-          reinterpretCastOp.getStaticStrides());
+          StridedLayoutAttr::get(&getContext(), 0, staticStrides));
+      rewrittenCasts.push_back(
+          rewriter.replaceOpWithNewOp<memref::ReinterpretCastOp>(
+              reinterpretCastOp, newMemrefType, newCastOp, ValueRange({}),
+              reinterpretCastOp.getSizes(), reinterpretCastOp.getStrides(),
+              SmallVector<int64_t>({0}), reinterpretCastOp.getStaticSizes(),
+              reinterpretCastOp.getStaticStrides()));
     }
     rewriter.eraseOp(op);
+  }
+
+  // Replacing a reinterpret_cast does not re-infer the result types of its
+  // users, so any memref.subview derived from it before the offset was folded
+  // into the address may still carry the old layout offset.  Recompute them.
+  for (auto castOp : rewrittenCasts) {
+    for (auto *user : castOp->getUsers()) {
+      auto subView = dyn_cast<memref::SubViewOp>(user);
+      if (!subView)
+        continue;
+      auto srcType = cast<MemRefType>(subView.getSource().getType());
+      auto fixedType = memref::SubViewOp::inferResultType(
+          srcType, subView.getMixedOffsets(), subView.getMixedSizes(),
+          subView.getMixedStrides());
+      if (fixedType != subView.getType())
+        subView.getResult().setType(fixedType);
+    }
   }
 
   // Try interleave optimization
