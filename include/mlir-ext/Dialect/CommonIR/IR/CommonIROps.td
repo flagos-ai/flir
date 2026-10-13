@@ -549,4 +549,86 @@ def CommonIR_PipeBarrierOp : CommonIR_Op<"pipe_barrier", []> {
   let assemblyFormat = "`[` $pipe `]` attr-dict";
 }
 
+//===----------------------------------------------------------------------===//
+// Tensor Tile Operations
+//===----------------------------------------------------------------------===//
+
+// ---------------------------------------------------------------------------
+// tile.extract_tile — extract a tensor tile by grid index
+// ---------------------------------------------------------------------------
+def CommonIR_ExtractTileOp
+    : CommonIR_Op<"extract_tile",
+                  [Pure, AllElementTypesMatch<["source", "result"]>]> {
+  let summary = "extract a tensor tile by grid index";
+  let description = [{
+    Extracts one tile from a tensor partitioned into equally shaped tiles.
+    The result shape specifies the tile shape. Source and result have the same
+    rank and element type, and each source dimension must be divisible by the
+    corresponding positive tile dimension.
+
+    The scalar integer index is a row-major linearized index into the tile
+    grid, whose shape is source.shape / result.shape. It must be in the range
+    [0, product(grid.shape)). The index may be a constant or a runtime value;
+    it is a tile number, not an element offset.
+
+    This op describes logical tensor selection independently of layout.
+    Backend lowering determines whether the selection is representable for
+    the concrete layouts.
+  }];
+
+  let arguments = (ins
+    TT_Tensor:$source,
+    TT_Int:$index
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $index `]` attr-dict
+    `:` type($source) `,` type($index) `->` type($result)
+  }];
+}
+
+// ---------------------------------------------------------------------------
+// tile.insert_tile — replace a tensor tile by grid index
+// ---------------------------------------------------------------------------
+def CommonIR_InsertTileOp
+    : CommonIR_Op<"insert_tile",
+                  [Pure, AllElementTypesMatch<["base", "update", "result"]>]> {
+  let summary = "replace a tensor tile by grid index";
+  let description = [{
+    Returns a tensor with one tile of base replaced by update. The result has
+    the same type as base, and elements outside the selected tile are preserved.
+    This is a tensor value operation and does not write memory.
+
+    The update shape specifies the tile shape. Base and update have the same
+    rank and element type, and each base dimension must be divisible by the
+    corresponding positive update dimension.
+
+    The scalar integer index is a row-major linearized index into the tile
+    grid, whose shape is base.shape / update.shape. It must be in the range
+    [0, product(grid.shape)). The index may be a constant or a runtime value;
+    it is a tile number, not an element offset.
+
+    This op describes logical tensor replacement independently of layout.
+    Backend lowering determines whether the replacement is representable for
+    the concrete layouts.
+  }];
+
+  let arguments = (ins
+    TT_Tensor:$base,
+    TT_Tensor:$update,
+    TT_Int:$index
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $base `,` $update `[` $index `]` attr-dict
+    `:` type($base) `,` type($update) `,` type($index) `->` type($result)
+  }];
+}
+
 #endif // TILE_IR_OPS

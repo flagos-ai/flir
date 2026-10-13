@@ -1,5 +1,6 @@
 add_triton_library(CommonIRTransforms
   InferLayout.cpp
+  BufferLayoutPropagation.cpp
 
   DEPENDS
   CommonIRTransformsPassIncGen

@@ -167,3 +167,19 @@ LogicalResult WaitFlagOp::verify() {
 LogicalResult PipeBarrierOp::verify() {
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// ExtractTileOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ExtractTileOp::verify() {
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// InsertTileOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult InsertTileOp::verify() {
+  return success();
+}
