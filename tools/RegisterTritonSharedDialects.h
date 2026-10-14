@@ -20,7 +20,7 @@
 #include "triton-shared/Conversion/TritonToStructured/Passes.h"
 #include "triton-shared/Conversion/TritonToUnstructured/Passes.h"
 #include "triton-shared/Conversion/UnstructuredToMemref/Passes.h"
-#include "triton-shared/Transforms/LaneVectorize/Passes.h"
+#include "mlir-ext/Dialect/CommonIR/Transforms/LaneVectorize/Passes.h"
 #include "triton-shared/Dialect/TPtr/IR/TPtrDialect.h"
 #include "triton-shared/Dialect/TritonStructured/IR/TritonStructuredDialect.h"
 #include "triton-shared/Dialect/TritonTilingExt/IR/TritonTilingExtDialect.h"

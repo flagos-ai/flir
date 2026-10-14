@@ -1,15 +1,16 @@
 //===----------------------------------------------------------------------===//
 // Passes.td - LaneVectorize pass definition -------------------------------===//
 //
-// This pass lives in lib/Transforms/LaneVectorize and is tablegenned with
-// `-name LaneVectorize` (see CMakeLists.txt), so the generated registration
-// function is registerLaneVectorizePasses(). The pass name, its `...Base`
-// class and the create<Name>() factory keep the Triton prefix that comes from
-// the def name. See lib/Transforms/LaneVectorize/LaneVectorize.cpp.
+// This pass lives in lib/Dialect/CommonIR/Transforms/LaneVectorize and is
+// tablegenned with `-name LaneVectorize` (see CMakeLists.txt), so the generated
+// registration function is registerLaneVectorizePasses(). The pass name, its
+// `...Base` class and the create<Name>() factory keep the Triton prefix that
+// comes from the def name. See
+// lib/Dialect/CommonIR/Transforms/LaneVectorize/LaneVectorize.cpp.
 //===----------------------------------------------------------------------===//
 
-#ifndef TRITON_SHARED_TRANSFORMS_LANE_VECTORIZE_PASSES
-#define TRITON_SHARED_TRANSFORMS_LANE_VECTORIZE_PASSES
+#ifndef MLIR_EXT_COMMONIR_TRANSFORMS_LANE_VECTORIZE_PASSES
+#define MLIR_EXT_COMMONIR_TRANSFORMS_LANE_VECTORIZE_PASSES
 
 include "mlir/Pass/PassBase.td"
 
@@ -19,7 +20,7 @@ def TritonLaneVectorize : Pass<"triton-lane-vectorize", "mlir::ModuleOp"> {
     This pass recognizes groups of Triton tensors that represent independent
     lanes of the same computation and packs them into a single tensor with a
     synthesized leading lane dimension (Superword Level Parallelism). It is
-    the TTIR implementation in lib/Transforms/LaneVectorize/LaneVectorize.cpp.
+    the TTIR implementation in lib/Dialect/CommonIR/Transforms/LaneVectorize/LaneVectorize.cpp.
 
     Example (2 lanes of tensor<4xf32>):
 
@@ -68,4 +69,4 @@ def TritonLaneVectorize : Pass<"triton-lane-vectorize", "mlir::ModuleOp"> {
                            "mlir::triton::TritonDialect"];
 }
 
-#endif // TRITON_SHARED_TRANSFORMS_LANE_VECTORIZE_PASSES
+#endif // MLIR_EXT_COMMONIR_TRANSFORMS_LANE_VECTORIZE_PASSES
