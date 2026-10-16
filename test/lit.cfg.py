@@ -16,6 +16,9 @@ from lit.llvm.subst import FindTool, ToolSubst
 # name: The name of this test suite
 config.name = 'TRITON-SHARED'
 
+if config.flir_build_incubated.upper() in ('ON', 'TRUE', '1', 'YES'):
+    config.available_features.add('flir-incubated')
+
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
 # suffixes: A list of file extensions to treat as test files.

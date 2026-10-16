@@ -24,6 +24,7 @@
 #define TRITONNPU_UTILS_UTILS_H
 
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -129,6 +130,15 @@ void traverseForwardUpdateUserChainIf(
 bool isMetaUse(Operation *op);
 
 bool isMixUse(Operation *op);
+
+// Keep these math ops on the tensor lowering path on Ascend. Their scalar
+// forms are not reliably supported by the device compiler, including when
+// computing pointer offsets. In particular, ceil/floor must not be replaced
+// by an integer round-trip: that restricts the input range and loses -0.
+inline bool hasOnlyVectorizedDeviceImpl(Operation *op) {
+  return isa<math::CeilOp, math::FloorOp, math::ExpOp, math::Exp2Op,
+             math::Log2Op, math::SinOp, math::CosOp, math::ErfOp>(op);
+}
 
 IndirectLoadInterfaceOpType getIndirectLoadInterfaceOpType(Operation *op);
 

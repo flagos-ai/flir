@@ -27,15 +27,19 @@
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
+#include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Config/llvm-config.h"
@@ -106,6 +110,40 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
+/*
+ * True when `v` feeds a tt.addptr offset through scalar or tensor arith/math
+ * and tt.splat. A value may also have data uses; one offset use is sufficient.
+ * Do not follow arbitrary users such as loads, stores, or region operations.
+ */
+inline bool scalarValueFeedsPointerOffset(Value v) {
+  llvm::SmallVector<Value> worklist{v};
+  llvm::SmallPtrSet<Operation *, 8> seen;
+  while (!worklist.empty()) {
+    Value cur = worklist.pop_back_val();
+    for (OpOperand &use : cur.getUses()) {
+      Operation *user = use.getOwner();
+      if (auto addPtr = dyn_cast<triton::AddPtrOp>(user)) {
+        if (addPtr.getOffset() == cur)
+          return true;
+        continue;
+      }
+      if (!seen.insert(user).second || user->getNumResults() != 1)
+        continue;
+      if (!isa<triton::SplatOp>(user) &&
+          !isa<arith::ArithDialect, math::MathDialect>(user->getDialect()))
+        continue;
+      Value res = user->getResult(0);
+      Type type = res.getType();
+      if (auto tensorType = dyn_cast<RankedTensorType>(type))
+        type = tensorType.getElementType();
+      if (!type.isIntOrIndexOrFloat())
+        continue;
+      worklist.push_back(res);
+    }
+  }
+  return false;
+}
+
 template <typename MathOp>
 class ScalarMathCanonicalizer : public OpRewritePattern<MathOp> {
 public:
@@ -120,6 +158,19 @@ public:
     if (!op->getResult(0).getType().isIntOrIndexOrFloat()) {
       return rewriter.notifyMatchFailure(
           op, "ScalarMathCanonicalizer handles scalar load scene.");
+    }
+    // Keep scalar ops feeding pointer offsets scalar. Splatting them to
+    // tensor<1xT> makes the later use analysis tag the generated tt.splat and
+    // tensor op MetaUse; MetaUseEraser then deletes them and the tensor.extract
+    // left behind is stranded on an unresolved materialization.
+    //
+    // Ops without a scalar device implementation are excluded: for them the
+    // tensor form is the only one that lowers, so they keep being splatted and
+    // the use analysis leaves the result alone instead of tagging it MetaUse.
+    if (!mlir::triton::hasOnlyVectorizedDeviceImpl(op) &&
+        scalarValueFeedsPointerOffset(op->getResult(0))) {
+      return rewriter.notifyMatchFailure(
+          op, "ScalarMathCanonicalizer skips pointer-offset computation.");
     }
     if (auto linalgOp = op->template getParentOfType<triton::ReduceOp>()) {
       return rewriter.notifyMatchFailure(

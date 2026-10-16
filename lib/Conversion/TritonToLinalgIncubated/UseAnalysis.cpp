@@ -576,6 +576,15 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
       op->removeAttr("MetaUse");
     }
   });
+  // Math ops the device only implements in vectorized form must survive as
+  // tensor<1xT> even in a pure address computation. MetaUse would both erase
+  // them and mark them illegal in the conversion target, stranding the
+  // tensor.extract that reads the result. Clear the tag along the operand
+  // chain too, otherwise the tt.splat feeding the op is erased instead.
+  funcOp.walk([&](Operation *op) {
+    if (mlir::triton::hasOnlyVectorizedDeviceImpl(op))
+      setMixUseRecursively(op);
+  });
   LLVM_DEBUG({
     os << "[UseAnalysis] After post-process, funcOp is " << *funcOp << "\n";
   });
