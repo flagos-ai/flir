@@ -28,6 +28,15 @@ include "mlir-ext/Dialect/CommonIR/IR/CommonIRAttrDefs.td"
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRTypes.td"
 
 //===----------------------------------------------------------------------===//
+// Index operand constraint
+//===----------------------------------------------------------------------===//
+// An index operand of tile.load / tile.store selecting a position in a
+// tensor_view. A scalar `index` selects a contiguous tile coordinate; a
+// rank-1 integer tensor supplies the per-lane coordinates of a gather_scatter
+// view sparse dimension.
+def CommonIR_ViewIndex : AnyTypeOf<[Index, RankedTensorOf<[Index, I32, I64]>]>;
+
+//===----------------------------------------------------------------------===//
 // Op Base
 //===----------------------------------------------------------------------===//
 
@@ -172,25 +181,29 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
 def CommonIR_LoadOp : CommonIR_Op<"load", [MemoryEffects<[MemRead]>]> {
   let summary = "Load data from global memory to local memory";
   let description = [{
-    Loads a tensor from a GM pointer into the specified destination memory
-    space (typically UB for Vector compute).
+    Loads a tensor from a GM pointer (or tensor_view with indices) into the
+    specified destination memory space (typically UB for Vector compute).
 
-    Example:
+    Examples:
     ```mlir
+    // Pointer path:
     %t = tile.load %ptr {engine=#tile.mte2, dst_space=#tile.UB}
           : !tt.ptr<f32> -> !tile.tensor<[128,128],f32,#tile.UB>
+    // TensorView path:
+    %t = tile.load %view [%i0, %i1] : !tv.tensor_view<...> -> tensor<128x128xf16>
     ```
   }];
 
   let arguments = (ins
-    TT_Ptr:$src,
+    AnyType:$src,
+    Variadic<CommonIR_ViewIndex>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_MemorySpace>:$dst_space
   );
 
-  let results = (outs CommonIR_TensorType:$result);
+  let results = (outs AnyTypeOf<[CommonIR_TensorType, AnyRankedTensor]>:$result);
 
-  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,27 +212,31 @@ def CommonIR_LoadOp : CommonIR_Op<"load", [MemoryEffects<[MemRead]>]> {
 def CommonIR_StoreOp : CommonIR_Op<"store", [MemoryEffects<[MemWrite]>]> {
   let summary = "Store data from local memory to global memory";
   let description = [{
-    Stores a tensor from local memory (e.g., UB) to a GM pointer destination.
+    Stores a tensor from local memory (e.g., UB) to a GM pointer (or
+    tensor_view with indices) destination.
 
-    Example:
+    Examples:
     ```mlir
+    // Pointer path:
     tile.store %tensor → %ptr {engine=#tile.mte3, src_layout=#tile.nd,
                dst_layout=#tile.nd}
+    // TensorView path:
+    tile.store %tensor -> %view [%i0, %i1] : tensor<128x128xf16>, !tv.tensor_view<...>
     ```
   }];
 
   let arguments = (ins
     AnyType:$src,
-    TT_Ptr:$dst,
+    AnyType:$dst,
+    Variadic<CommonIR_ViewIndex>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_Layout>:$dst_layout,
-    OptionalAttr<StrAttr>:$comment
+    OptionalAttr<StrAttr>:$comment,
+    OptionalAttr<CommonIR_MemorySpace>:$src_space
   );
 
-  let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ---------------------------------------------------------------------------

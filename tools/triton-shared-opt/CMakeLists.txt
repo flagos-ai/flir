@@ -8,6 +8,7 @@ llvm_update_compile_flags(triton-shared-opt)
 target_link_libraries(triton-shared-opt PRIVATE
   TritonTransforms
   TritonSharedAnalysis
+  TensorViewIR
   ${dialect_libs}
   ${conversion_libs}
   # tests
