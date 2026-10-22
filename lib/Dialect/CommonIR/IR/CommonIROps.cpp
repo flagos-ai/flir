@@ -64,11 +64,115 @@ LogicalResult LoadOp::verify() {
   return success();
 }
 
+// tile.load %src attr-dict : type($src) -> type($result)
+// tile.load %src [%i0, %i1] attr-dict : type($src) -> type($result)
+void LoadOp::print(OpAsmPrinter &p) {
+  p << ' ' << getSrc();
+  auto indices = getIndices();
+  if (!indices.empty()) {
+    p << " [";
+    llvm::interleaveComma(indices, p,
+                          [&](Value v) { p.printOperand(v); });
+    p << "]";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getSrc().getType();
+  for (Value index : indices)
+    p << ", " << index.getType();
+  p << " -> " << getResult().getType();
+}
+
+ParseResult LoadOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> indices;
+  Type srcType, resultType;
+
+  if (parser.parseOperand(src))
+    return failure();
+
+  // Optional [indices]
+  if (succeeded(parser.parseOptionalLSquare())) {
+    if (parser.parseOperandList(indices) || parser.parseRSquare())
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(srcType))
+    return failure();
+
+  SmallVector<Type, 4> indexTypes;
+  for (unsigned i = 0, e = indices.size(); i < e; ++i)
+    if (parser.parseComma() || parser.parseType(indexTypes.emplace_back()))
+      return failure();
+
+  if (parser.parseArrow() || parser.parseType(resultType))
+    return failure();
+
+  if (parser.resolveOperand(src, srcType, result.operands) ||
+      parser.resolveOperands(indices, indexTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
+  result.addTypes(resultType);
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // StoreOp
 //===----------------------------------------------------------------------===//
 
 LogicalResult StoreOp::verify() {
+  return success();
+}
+
+// tile.store %src -> %dst attr-dict : type($src), type($dst)
+// tile.store %src -> %dst [%i0, %i1] attr-dict : type($src), type($dst)
+void StoreOp::print(OpAsmPrinter &p) {
+  p << ' ' << getSrc() << " -> " << getDst();
+  auto indices = getIndices();
+  if (!indices.empty()) {
+    p << " [";
+    llvm::interleaveComma(indices, p,
+                          [&](Value v) { p.printOperand(v); });
+    p << "]";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getSrc().getType() << ", " << getDst().getType();
+  for (Value index : indices)
+    p << ", " << index.getType();
+}
+
+ParseResult StoreOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src, dst;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> indices;
+  Type srcType, dstType;
+
+  if (parser.parseOperand(src) || parser.parseArrow() ||
+      parser.parseOperand(dst))
+    return failure();
+
+  // Optional [indices]
+  if (succeeded(parser.parseOptionalLSquare())) {
+    if (parser.parseOperandList(indices) || parser.parseRSquare())
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(srcType) || parser.parseComma() ||
+      parser.parseType(dstType))
+    return failure();
+
+  SmallVector<Type, 4> indexTypes;
+  for (unsigned i = 0, e = indices.size(); i < e; ++i)
+    if (parser.parseComma() || parser.parseType(indexTypes.emplace_back()))
+      return failure();
+
+  if (parser.resolveOperand(src, srcType, result.operands) ||
+      parser.resolveOperand(dst, dstType, result.operands) ||
+      parser.resolveOperands(indices, indexTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
   return success();
 }
 
