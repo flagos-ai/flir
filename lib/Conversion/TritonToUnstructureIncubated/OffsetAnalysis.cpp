@@ -797,9 +797,61 @@ void parseClampF(triton::ClampFOp op, const Location &loc,
   offsetMap[dst].setUnstructured(dstType.getRank());
 }
 
+// A pointer selected by arith.select has no single provable base, so the
+// analysis must record the SSA value itself as the source instead of choosing
+// one incoming source and losing the other branch.
+static bool isScalarPointer(Value value) {
+  auto pointerType = dyn_cast<triton::PointerType>(value.getType());
+  return pointerType && !isa<ShapedType>(pointerType.getPointeeType());
+}
+
+static bool isTensorPointer(Value value) {
+  auto tensorType = dyn_cast<RankedTensorType>(value.getType());
+  return tensorType && isa<triton::PointerType>(tensorType.getElementType());
+}
+
+// A scalar pointer selected or carried by structured control flow is already a
+// complete runtime address. Recording the SSA value itself as the source avoids
+// choosing one incoming source and losing the other branch or loop iteration.
+// Later addptr users can still accumulate a separate offset from this address.
+static void
+recordOpaqueScalarPointer(Value pointer,
+                          llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap) {
+  offsetMap[pointer] = PtrOffsetInfo();
+  offsetMap[pointer].setPtr(pointer);
+  offsetMap[pointer].setZeroOffset();
+  offsetMap[pointer].setScalarLike(true);
+}
+
+// A tensor pointer without a proven common scalar base may choose a different
+// source for every element. This includes opaque function arguments,
+// per-lane selects, and loop phi values whose incoming provenance has not been
+// merged. Preserve the pointer tensor itself as the complete opaque base and
+// attach a zero displacement. Later addptr parsing can accumulate an additional
+// offset on top of it.
+static void
+recordOpaqueTensorPointer(Value pointerTensor,
+                          llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap) {
+  auto tensorType = cast<RankedTensorType>(pointerTensor.getType());
+  offsetMap[pointerTensor] = PtrOffsetInfo();
+  offsetMap[pointerTensor].setPtr(pointerTensor);
+  offsetMap[pointerTensor].setZeroOffset();
+  offsetMap[pointerTensor].setUnstructured(tensorType.getRank());
+}
+
 void parseSelect(arith::SelectOp op, const Location &loc,
                  RewriterBase &rewriter,
                  llvm::DenseMap<Value, PtrOffsetInfo> &offsetMap) {
+  if (isScalarPointer(op.getResult())) {
+    recordOpaqueScalarPointer(op.getResult(), offsetMap);
+    return;
+  }
+
+  if (isTensorPointer(op.getResult())) {
+    recordOpaqueTensorPointer(op.getResult(), offsetMap);
+    return;
+  }
+
   // Get select condition
   auto condition = op.getCondition();
   parse(condition, op.getLoc(), rewriter, offsetMap);

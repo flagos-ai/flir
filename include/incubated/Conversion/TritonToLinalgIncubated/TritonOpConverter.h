@@ -721,6 +721,18 @@ public:
                   ConversionPatternRewriter &rewriter) const override;
 };
 
+// A scalar-pointer arith.select cannot be expressed
+// as a single structured memref base, so it is rebuilt from a complete integer
+// address (materialize both operands, select on i64, reconstruct the pointer
+// carrier with hivm.pointer_cast).
+class PointerSelectConverter : public OpConversionPattern<arith::SelectOp> {
+public:
+  using OpConversionPattern<arith::SelectOp>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
 class IndexPutConverter
     : public OpConversionPattern<triton::ascend::IndexPutOp> {
 public:
