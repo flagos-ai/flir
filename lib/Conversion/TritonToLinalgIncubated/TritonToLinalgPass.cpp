@@ -46,6 +46,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include "mlir-ext/Dialect/CommonIR/IR/CommonIRDialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #endif
@@ -122,6 +123,26 @@ static bool isSIMTOp(Operation *op) {
              triton::ascend::ScatterUbToOutOp, triton::ascend::IndirectLoadOp,
              triton::ascend::IndirectStoreOp>(op);
 }
+
+// Keep explicit copy extents while adopting the actual pointer views produced
+// by AddPtrConverter or MakeTensorPtrConverter, without materializing data.
+struct CommonIRCopyOperandConverter
+    : OpConversionPattern<triton::tile::CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(triton::tile::CopyOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (op.getShape().empty() || !isa<MemRefType>(adaptor.getSrc().getType()) ||
+        !isa<MemRefType>(adaptor.getDst().getType()))
+      return failure();
+    OperationState state(op.getLoc(), op->getName());
+    state.addOperands(adaptor.getOperands());
+    state.addAttributes(op->getAttrs());
+    rewriter.create(state);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 TritonTypeConverter::TritonTypeConverter() {
   addConversion([](Type type) { return type; });
@@ -462,6 +483,12 @@ void TritonToLinalgIncubatedPass::addDynamicLegal(
 
   // add legal dialect on condition
   target.addLegalOp<ModuleOp>();
+  target.addDynamicallyLegalOp<triton::tile::CopyOp>(
+      [](triton::tile::CopyOp op) {
+        return op.getShape().empty() ||
+               (isa<MemRefType>(op.getSrc().getType()) &&
+                isa<MemRefType>(op.getDst().getType()));
+      });
 
   // decide which ops need conversion based on uses
   target.addDynamicallyLegalOp<mlir::UnrealizedConversionCastOp>(
@@ -923,6 +950,7 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
   this->populateTritonToLinalgConversionPatterns(tritonTypeConverter, patterns,
                                                  LAUNCH_GRID_RANK);
+  patterns.add<CommonIRCopyOperandConverter>(&getContext());
 #ifdef __TLE_STRUCT__
   triton::tle::populateTleMathOpConversionPatterns(tritonTypeConverter,
                                                    patterns);
