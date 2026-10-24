@@ -29,6 +29,7 @@ add_triton_library(TritonToLinalgIncubated
   MLIRTransforms
   MLIRSupport
   TritonIR
+  CommonIRIR
   TritonTransforms
   TritonAnalysis
   MLIRTritonNPUUtils

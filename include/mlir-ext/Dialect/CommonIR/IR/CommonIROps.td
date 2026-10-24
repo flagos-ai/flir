@@ -144,6 +144,14 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
     Copies data from source to destination, optionally performing layout
     conversion (e.g., ND→NZ for Cube operands) and transpose.
 
+    When `shape` is present, its scalar i32 operands specify the common
+    logical region [0, shape) on both sides. Each operand retains its own
+    physical offset and strides. Extents must be non-negative and within
+    both operands' capacities. Callers must satisfy target-specific DMA
+    alignment and padding requirements; physical padding writes are not
+    protected by the logical region. Any zero extent makes the logical
+    copy a no-op. Omitting `shape` preserves the legacy full-region copy form.
+
     Example:
     ```mlir
     tile.copy %src → %dst {engine=#tile.mte2, src_layout=#tile.nd,
@@ -154,6 +162,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
+    Variadic<I32>:$shape,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_NZLayoutAttr>:$dst_nz_layout,
@@ -162,7 +171,8 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   );
 
   let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
+    $src `->` $dst (`shape` `(` $shape^ `:` type($shape) `)`)?
+    attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
