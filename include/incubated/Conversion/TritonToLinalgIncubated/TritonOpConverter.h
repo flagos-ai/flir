@@ -53,6 +53,8 @@ using namespace triton;
 
 static constexpr unsigned kFuncNameCap = 128;
 
+void legalizeVectorDotOperands(ModuleOp module);
+
 /*
 Convert `tt.precise_div` operation to `arith.divf` operation.
 tensor_x / tensor_y

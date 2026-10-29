@@ -28,6 +28,7 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -38,6 +39,8 @@
 #include <cstdlib>
 #include <utility>
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -190,12 +193,213 @@ BitcastConverter::matchAndRewrite(triton::BitcastOp op, OpAdaptor adaptor,
   return success();
 }
 
+static bool isAscend910B(Operation *op) {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!module || compileOn91095Flag)
+    return false;
+  auto target = module->getAttrOfType<hacc::TargetAttr>("hacc.target");
+  return target && target.getTarget().getValue().starts_with("Ascend910B");
+}
+
+// Keep byte/word storage conversion opaque until physical strides are known.
+// CANN otherwise pushes a flat cast across reshape and reintroduces a broken
+// sub-block 2D cast. Values here undergo only permutation before narrowing.
+static Value castPermutationStorage(Value input, RankedTensorType type,
+                                    Location loc,
+                                    ConversionPatternRewriter &rewriter) {
+  auto srcType = cast<RankedTensorType>(input.getType());
+  bool extend = srcType.getElementType().isInteger(8) &&
+                type.getElementType().isInteger(16);
+  bool truncate = srcType.getElementType().isInteger(16) &&
+                  type.getElementType().isInteger(8);
+  if (!extend && !truncate) {
+    if (srcType.getElementType().getIntOrFloatBitWidth() >
+        type.getElementType().getIntOrFloatBitWidth())
+      return rewriter.create<arith::TruncIOp>(loc, type, input);
+    return rewriter.create<arith::ExtUIOp>(loc, type, input);
+  }
+  assert(srcType.getRank() == 1 && type.getRank() == 1);
+  Value empty =
+      rewriter.create<bufferization::AllocTensorOp>(loc, type, ValueRange{});
+  auto tempType = RankedTensorType::get(type.getShape(), rewriter.getF16Type());
+  Value temp = rewriter.create<bufferization::AllocTensorOp>(loc, tempType,
+                                                             ValueRange{});
+  auto cast = rewriter.create<hivm::CustomOp>(
+      loc, TypeRange{type, tempType}, "flagtree.structured_storage_cast",
+      ValueRange{input}, ValueRange{empty, temp}, ValueRange{});
+  cast.setCoreType(hivm::TCoreType::VECTOR);
+  cast.setPipe(hivm::PIPE::PIPE_V);
+  cast.setVFMode(hivm::VFMode::SIMD);
+  cast->setAttr("symbol", rewriter.getStringAttr(
+                              extend ? "custom_flagtree_byte_to_word"
+                                     : "custom_flagtree_word_to_byte"));
+  cast->setAttr("max_rank", rewriter.getI64IntegerAttr(1));
+  cast->setAttr("no_side_effect", rewriter.getUnitAttr());
+  return cast->getResult(0);
+}
+
+// Small innermost axes otherwise become one padded UB row per few elements.
+// Express their static permutation as a single packed vector gather instead.
+// This also applies when the last axis stays in place: native 3-D transpose
+// pads a short last axis, and its following compaction can use unaligned VEC
+// destinations. Bound the index buffer to 16 KiB for larger native tiling.
+// This is a code-generation choice for a constant permutation, not a dynamic
+// Triton gather, and preserves the exact bit pattern of every element.
+static Value tryPackedVectorTranspose(Value src, RankedTensorType resultType,
+                                      ArrayRef<int> order, Location loc,
+                                      ConversionPatternRewriter &rewriter) {
+  auto srcType = dyn_cast<RankedTensorType>(src.getType());
+  // The packaged primitive currently targets dav-c220. Keep the existing
+  // lowering on the separately selected 910_95 architecture.
+  if (!isAscend910B(src.getParentBlock()->getParentOp()) || !srcType ||
+      !srcType.hasStaticShape() || srcType.getEncoding() ||
+      resultType.getEncoding() || order.empty())
+    return {};
+  SmallVector<int> sourceAxes, resultAxes;
+  for (int i = 0; i < srcType.getRank(); ++i)
+    if (srcType.getDimSize(i) != 1)
+      sourceAxes.push_back(i);
+  for (int axis : order)
+    if (srcType.getDimSize(axis) != 1)
+      resultAxes.push_back(axis);
+  if (sourceAxes == resultAxes) {
+    // Permuting only unit axes preserves flattened element order exactly.
+    Value shape = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr(resultType.getShape()));
+    return rewriter.create<tensor::ReshapeOp>(loc, resultType, src, shape);
+  }
+  auto elemType = srcType.getElementType();
+  bool narrow = elemType.isInteger(8) || elemType.isInteger(1);
+  if (!narrow &&
+      (!elemType.isIntOrFloat() || (elemType.getIntOrFloatBitWidth() != 16 &&
+                                    elemType.getIntOrFloatBitWidth() != 32)))
+    return {};
+  int64_t count = srcType.getNumElements();
+  int64_t storageBits = narrow ? 16 : elemType.getIntOrFloatBitWidth();
+  int64_t blockElements = 32 / (storageBits / 8);
+  if (count < blockElements || count > 4096 ||
+      (srcType.getShape().back() >= blockElements &&
+       resultType.getShape().back() >= blockElements))
+    return {};
+  for (int64_t dim : srcType.getShape())
+    if (dim <= 0 || (dim & (dim - 1)))
+      return {};
+
+  // Complete admission before emitting widening or scratch allocations. A
+  // rejected recursive attempt must not leave private operations in native IR.
+  if (narrow) {
+    // CANN's narrow-element transpose may pad each element into a UB row.
+    // Widen storage only; truncation restores the original bits exactly.
+    auto wideSrcType =
+        RankedTensorType::get(srcType.getShape(), rewriter.getI16Type());
+    auto wideResultType =
+        RankedTensorType::get(resultType.getShape(), rewriter.getI16Type());
+    int64_t count = srcType.getNumElements();
+    auto narrowFlatType = RankedTensorType::get({count}, elemType);
+    auto wideFlatType = RankedTensorType::get({count}, rewriter.getI16Type());
+    Value flatShape = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr({count}));
+    Value flat =
+        rewriter.create<tensor::ReshapeOp>(loc, narrowFlatType, src, flatShape);
+    Value wide = castPermutationStorage(flat, wideFlatType, loc, rewriter);
+    Value srcShape = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr(srcType.getShape()));
+    wide = rewriter.create<tensor::ReshapeOp>(loc, wideSrcType, wide, srcShape);
+    Value permuted =
+        tryPackedVectorTranspose(wide, wideResultType, order, loc, rewriter);
+    if (!permuted)
+      return {};
+    Value wideFlat = rewriter.create<tensor::ReshapeOp>(loc, wideFlatType,
+                                                        permuted, flatShape);
+    Value narrowed =
+        castPermutationStorage(wideFlat, narrowFlatType, loc, rewriter);
+    Value resultShape = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr(resultType.getShape()));
+    return rewriter.create<tensor::ReshapeOp>(loc, resultType, narrowed,
+                                              resultShape);
+  }
+  // Power-of-two axes permit exact vector shift/mask index generation.
+  // Non-splat tensor constants bufferize to untagged memref globals in CANN 9;
+  // generate the static permutation's addresses in UB instead.
+  SmallVector<int64_t> srcStrides(srcType.getRank(), 1);
+  for (int i = srcType.getRank() - 2; i >= 0; --i)
+    srcStrides[i] = srcStrides[i + 1] * srcType.getDimSize(i + 1);
+  auto flatType = RankedTensorType::get({count}, elemType);
+  Value flatShape = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI64TensorAttr({count}));
+  Value flat =
+      rewriter.create<tensor::ReshapeOp>(loc, flatType, src, flatShape);
+  auto indexType = RankedTensorType::get({count}, rewriter.getI32Type());
+  Value indexEmpty = rewriter.create<tensor::EmptyOp>(
+      loc, ArrayRef<int64_t>{count}, rewriter.getI32Type());
+  Value range =
+      rewriter.create<hivm::VArangeOp>(loc, TypeRange{indexType}, indexEmpty)
+          ->getResult(0);
+  auto splat = [&](int64_t value) -> Value {
+    auto attr = DenseIntElementsAttr::get(
+        indexType, ArrayRef<int32_t>{static_cast<int32_t>(value)});
+    return rewriter.create<arith::ConstantOp>(loc, attr);
+  };
+  Value index;
+  int shift = 0;
+  for (int dim = resultType.getRank() - 1; dim >= 0; --dim) {
+    int64_t size = resultType.getDimSize(dim);
+    if (size == 1)
+      continue;
+    Value coord = range;
+    if (shift)
+      coord = rewriter.create<arith::ShRUIOp>(loc, coord, splat(shift));
+    coord = rewriter.create<arith::AndIOp>(loc, coord, splat(size - 1));
+    int64_t stride = srcStrides[order[dim]];
+    if (stride != 1)
+      coord = rewriter.create<arith::MulIOp>(loc, coord, splat(stride));
+    if (index)
+      index = rewriter.create<arith::AddIOp>(loc, index, coord);
+    else
+      index = coord;
+    for (int64_t width = size; width > 1; width /= 2)
+      ++shift;
+  }
+  Value empty =
+      rewriter.create<tensor::EmptyOp>(loc, ArrayRef<int64_t>{count}, elemType);
+  // CANN's built-in VGather implementation assumes physical unit strides.
+  // Preserve the logical contract with the backend-owned implementation;
+  // its custom-op boundary also prevents unrelated operand stride alignment.
+  Value addresses = rewriter.create<bufferization::AllocTensorOp>(
+      loc, indexType, ValueRange{});
+  StringRef suffix = elemType.isF16()         ? "half"
+                     : elemType.isBF16()      ? "bf16"
+                     : elemType.isF32()       ? "float"
+                     : elemType.isInteger(16) ? "int16"
+                                              : "int32";
+  auto gather = rewriter.create<hivm::CustomOp>(
+      loc, TypeRange{flatType, indexType}, "flagtree.structured_gather",
+      ValueRange{flat, index}, ValueRange{empty, addresses}, ValueRange{});
+  gather.setCoreType(hivm::TCoreType::VECTOR);
+  gather.setPipe(hivm::PIPE::PIPE_V);
+  gather.setVFMode(hivm::VFMode::SIMD);
+  gather->setAttr("symbol",
+                  rewriter.getStringAttr(
+                      ("custom_flagtree_stride_gather_" + suffix).str()));
+  gather->setAttr("max_rank", rewriter.getI64IntegerAttr(1));
+  gather->setAttr("no_side_effect", rewriter.getUnitAttr());
+  Value gathered = gather->getResult(0);
+  Value resultShape = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI64TensorAttr(resultType.getShape()));
+  return rewriter.create<tensor::ReshapeOp>(loc, resultType, gathered,
+                                            resultShape);
+}
+
 LogicalResult
 TransposeConverter::matchAndRewrite(triton::TransOp op, OpAdaptor adaptor,
                                     ConversionPatternRewriter &rewriter) const {
   auto src = adaptor.getSrc();
-  auto res = ConverterUtils::getTransposedValue(src, op.getLoc(), rewriter,
-                                                op.getOrder());
+  Value res = tryPackedVectorTranspose(
+      src, cast<RankedTensorType>(op.getResult().getType()), op.getOrder(),
+      op.getLoc(), rewriter);
+  if (!res)
+    res = ConverterUtils::getTransposedValue(src, op.getLoc(), rewriter,
+                                             op.getOrder());
   rewriter.replaceOp(op, res);
   return success();
 }
@@ -1866,38 +2070,156 @@ LogicalResult UnrealizedCastConverter::matchAndRewrite(
 LogicalResult
 JoinConverter::matchAndRewrite(triton::JoinOp op, OpAdaptor adaptor,
                                ConversionPatternRewriter &rewriter) const {
-  Value opa = op.getLhs();
-  Value opb = op.getRhs();
   auto loc = op.getLoc();
-
-  auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
-  Value emptyOp = rewriter.create<tensor::EmptyOp>(loc, resType.getShape(),
-                                                   resType.getElementType());
-
-  auto shape = dyn_cast<RankedTensorType>(opa.getType()).getShape();
-  auto sizes = llvm::map_to_vector(shape, [&](int64_t t) {
-    return OpFoldResult(rewriter.getI64IntegerAttr(t));
-  });
-  sizes.push_back(rewriter.getI64IntegerAttr(1));
-
-  int64_t rank = resType.getRank();
-
-  // Set last dimension stride to 2 in layout
-  // As last dimension size is always 1, last dimension stride here could be
-  // either 1 or 2, while stride `2` could carry interleave trait and it's
-  // convenient for next lower.
-  SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
-  strides.back() = rewriter.getIndexAttr(2);
-
-  SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
-
-  auto insert0 = rewriter.create<tensor::InsertSliceOp>(
-      loc, opa, emptyOp, offsets, sizes, strides);
-
-  offsets.back() = rewriter.getIndexAttr(1);
-  auto insert1 = rewriter.create<tensor::InsertSliceOp>(
-      loc, opb, insert0, offsets, sizes, strides);
-  rewriter.replaceOp(op, insert1);
+  Value lhs = op.getLhs(), rhs = op.getRhs();
+  auto inputType = cast<RankedTensorType>(lhs.getType());
+  auto resultType = cast<RankedTensorType>(op.getResult().getType());
+  Type originalElement = inputType.getElementType();
+  bool supportedElement =
+      originalElement.isF16() || originalElement.isBF16() ||
+      originalElement.isF32() || originalElement.isInteger(8) ||
+      originalElement.isInteger(16) || originalElement.isInteger(32);
+  auto module = op->getParentOfType<ModuleOp>();
+  auto policy =
+      module->getAttrOfType<StringAttr>("flagtree.structured_join_lowering");
+  StringRef lowering = policy ? policy.getValue() : "auto";
+  // Within the compact index budget, packed interleave avoids strided
+  // transfers in both per-row and persistent dispatch. Keep native as an
+  // explicit A/B policy; it still requires the original dense graph proof.
+  bool preferNative = lowering == "native";
+  bool denseNative =
+      preferNative && isAscend910B(op) && supportedElement &&
+      !originalElement.isInteger(8) && inputType.hasStaticShape() &&
+      !inputType.getEncoding() && !resultType.getEncoding() &&
+      inputType.getRank() == 1 &&
+      inputType.getNumElements() * originalElement.getIntOrFloatBitWidth() >=
+          256 &&
+      op->hasAttr("flagtree.dense_native_permutation");
+  // Admit the complete packed algorithm only within its index-buffer budget.
+  // In particular, do not widen a large byte join and then send it to a padded
+  // native transpose: that consumes far more UB than the existing interleave.
+  if (!isAscend910B(op) || !supportedElement || !inputType.hasStaticShape() ||
+      inputType.getNumElements() > 2048 || inputType.getEncoding() ||
+      resultType.getEncoding() || denseNative) {
+    auto storedType = resultType;
+    bool rawBits = denseNative && isa<FloatType>(originalElement);
+    if (rawBits) {
+      Type bits =
+          rewriter.getIntegerType(originalElement.getIntOrFloatBitWidth());
+      auto bitsInput = RankedTensorType::get(inputType.getShape(), bits);
+      lhs = rewriter.create<arith::BitcastOp>(loc, bitsInput, lhs);
+      rhs = rewriter.create<arith::BitcastOp>(loc, bitsInput, rhs);
+      resultType = RankedTensorType::get(resultType.getShape(), bits);
+    }
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, resultType.getShape(),
+                                                   resultType.getElementType());
+    auto sizes = llvm::map_to_vector(inputType.getShape(), [&](int64_t size) {
+      return OpFoldResult(rewriter.getIndexAttr(size));
+    });
+    sizes.push_back(rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> offsets(resultType.getRank(),
+                                      rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> strides(resultType.getRank(),
+                                      rewriter.getIndexAttr(1));
+    strides.back() = rewriter.getIndexAttr(2);
+    Value first = rewriter.create<tensor::InsertSliceOp>(
+        loc, lhs, empty, offsets, sizes, strides);
+    offsets.back() = rewriter.getIndexAttr(1);
+    Value second = rewriter.create<tensor::InsertSliceOp>(
+        loc, rhs, first, offsets, sizes, strides);
+    if (rawBits)
+      second = rewriter.create<arith::BitcastOp>(loc, storedType, second);
+    rewriter.replaceOp(op, second);
+    return success();
+  }
+  if (!inputType.hasStaticShape())
+    return rewriter.notifyMatchFailure(op, "join requires a static shape");
+  int64_t count = inputType.getNumElements();
+  auto elemType = inputType.getElementType();
+  auto originalResultType = resultType;
+  bool bitwise = elemType.isF16() || elemType.isBF16() || elemType.isF32();
+  if (bitwise) {
+    elemType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
+    auto bitsType = RankedTensorType::get(inputType.getShape(), elemType);
+    lhs = rewriter.create<arith::BitcastOp>(loc, bitsType, lhs);
+    rhs = rewriter.create<arith::BitcastOp>(loc, bitsType, rhs);
+    resultType = RankedTensorType::get(resultType.getShape(), elemType);
+  }
+  bool narrow = elemType.isInteger(8) || elemType.isInteger(1);
+  if (narrow) {
+    auto wideType = RankedTensorType::get({count}, rewriter.getI16Type());
+    auto narrowType = RankedTensorType::get({count}, elemType);
+    Value flatShape = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr({count}));
+    auto extend = [&](Value value) -> Value {
+      value =
+          rewriter.create<tensor::ReshapeOp>(loc, narrowType, value, flatShape);
+      return castPermutationStorage(value, wideType, loc, rewriter);
+    };
+    lhs = extend(lhs);
+    rhs = extend(rhs);
+    elemType = rewriter.getI16Type();
+    resultType = RankedTensorType::get(resultType.getShape(), elemType);
+  }
+  auto finish = [&](Value value) {
+    if (narrow) {
+      Value flatShape = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64TensorAttr({2 * count}));
+      auto wideFlatType = RankedTensorType::get({2 * count}, elemType);
+      auto narrowFlatType = RankedTensorType::get(
+          {2 * count}, originalResultType.getElementType());
+      value = rewriter.create<tensor::ReshapeOp>(loc, wideFlatType, value,
+                                                 flatShape);
+      value = castPermutationStorage(value, narrowFlatType, loc, rewriter);
+      Value shape = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64TensorAttr(originalResultType.getShape()));
+      value = rewriter.create<tensor::ReshapeOp>(loc, originalResultType, value,
+                                                 shape);
+    }
+    if (bitwise)
+      value = rewriter.create<arith::BitcastOp>(loc, originalResultType, value);
+    rewriter.replaceOp(op, value);
+  };
+  // Keep the two channels compact before transposition. The stride-2 slice
+  // spelling selects CANN's interleave library even for padded UB operands;
+  // that implementation does not honor their logical strides. This spelling
+  // uses regular concat/transpose lowering with an explicit element order.
+  auto reshape = [&](Value value, ArrayRef<int64_t> shape) -> Value {
+    auto type = RankedTensorType::get(shape, elemType);
+    if (value.getType() == type)
+      return value;
+    Value shapeValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64TensorAttr(shape));
+    return rewriter.create<tensor::ReshapeOp>(loc, type, value, shapeValue);
+  };
+  lhs = reshape(lhs, {count});
+  rhs = reshape(rhs, {count});
+  if (count == 1) {
+    // A two-scalar join has no vector-length data loop. Avoid CANN concat's
+    // block-copy path for sub-block sources; insert the two exact elements.
+    auto flatResultType = RankedTensorType::get({2}, elemType);
+    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value a = rewriter.create<tensor::ExtractOp>(loc, elemType, lhs, zero);
+    Value b = rewriter.create<tensor::ExtractOp>(loc, elemType, rhs, zero);
+    Value empty = rewriter.create<tensor::EmptyOp>(
+        loc, flatResultType.getShape(), elemType);
+    Value first = rewriter.create<tensor::InsertOp>(loc, a, empty, zero);
+    Value second = rewriter.create<tensor::InsertOp>(loc, b, first, one);
+    finish(reshape(second, resultType.getShape()));
+    return success();
+  }
+  auto packedType = RankedTensorType::get({2 * count}, elemType);
+  Value packed = rewriter.create<tensor::ConcatOp>(loc, packedType, 0,
+                                                   ValueRange{lhs, rhs});
+  Value channels = reshape(packed, {2, count});
+  auto interleavedType = RankedTensorType::get({count, 2}, elemType);
+  Value interleaved = tryPackedVectorTranspose(channels, interleavedType,
+                                               {1, 0}, loc, rewriter);
+  if (!interleaved)
+    interleaved =
+        ConverterUtils::getTransposedValue(channels, loc, rewriter, {1, 0});
+  finish(reshape(interleaved, resultType.getShape()));
   return success();
 }
 
@@ -2020,6 +2342,92 @@ SplitConverter::matchAndRewrite(triton::SplitOp op, OpAdaptor adaptor,
   Value input = op.getSrc();
   auto loc = op.getLoc();
   auto inputType = cast<RankedTensorType>(input.getType());
+  auto outType = cast<RankedTensorType>(op.getOutLHS().getType());
+  if (auto constant = input.getDefiningOp<arith::ConstantOp>()) {
+    if (auto dense = dyn_cast<DenseElementsAttr>(constant.getValue())) {
+      SmallVector<Attribute> channels[2];
+      int64_t i = 0;
+      for (Attribute value : dense.getValues<Attribute>())
+        channels[i++ % 2].push_back(value);
+      SmallVector<Value> results;
+      for (auto &channel : channels)
+        results.push_back(rewriter.create<arith::ConstantOp>(
+            loc,
+            DenseElementsAttr::get(outType, ArrayRef<Attribute>(channel))));
+      rewriter.replaceOp(op, results);
+      return success();
+    }
+  }
+  Type element = inputType.getElementType();
+  bool narrow = element.isInteger(8) || element.isInteger(1);
+  bool word = element.isF16() || element.isBF16() || element.isF32() ||
+              element.isInteger(16) || element.isInteger(32);
+  bool denseLoad = word && inputType.getRank() == 2 &&
+                   op->hasAttr("flagtree.dense_native_permutation");
+  if (isAscend910B(op) && (word || narrow) && !inputType.getEncoding() &&
+      !outType.getEncoding() && (narrow || !denseLoad)) {
+    int64_t count = outType.getNumElements();
+    Type storageElement = narrow ? rewriter.getI16Type() : element;
+    if (narrow) {
+      auto narrowFlatType = RankedTensorType::get({2 * count}, element);
+      auto wideType = RankedTensorType::get({2 * count}, storageElement);
+      Value shape = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64TensorAttr({2 * count}));
+      input =
+          rewriter.create<tensor::ReshapeOp>(loc, narrowFlatType, input, shape);
+      input = castPermutationStorage(input, wideType, loc, rewriter);
+    }
+    auto reshape = [&](Value value, ArrayRef<int64_t> shape) -> Value {
+      auto type = RankedTensorType::get(shape, storageElement);
+      if (value.getType() == type)
+        return value;
+      Value sizes = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64TensorAttr(shape));
+      return rewriter.create<tensor::ReshapeOp>(loc, type, value, sizes);
+    };
+    Value flat = reshape(input, {2 * count});
+    auto flatType = RankedTensorType::get({count}, storageElement);
+    auto indexType = RankedTensorType::get({count}, rewriter.getI32Type());
+    Value lhs = rewriter.create<bufferization::AllocTensorOp>(loc, flatType,
+                                                              ValueRange{});
+    Value rhs = rewriter.create<bufferization::AllocTensorOp>(loc, flatType,
+                                                              ValueRange{});
+    Value addresses = rewriter.create<bufferization::AllocTensorOp>(
+        loc, indexType, ValueRange{});
+    StringRef suffix = storageElement.isF16()         ? "half"
+                       : storageElement.isBF16()      ? "bf16"
+                       : storageElement.isF32()       ? "float"
+                       : storageElement.isInteger(16) ? "int16"
+                                                      : "int32";
+    auto split = rewriter.create<hivm::CustomOp>(
+        loc, TypeRange{flatType, flatType, indexType},
+        "flagtree.structured_split", ValueRange{flat},
+        ValueRange{lhs, rhs, addresses}, ValueRange{});
+    split.setCoreType(hivm::TCoreType::VECTOR);
+    split.setPipe(hivm::PIPE::PIPE_V);
+    split.setVFMode(hivm::VFMode::SIMD);
+    split->setAttr("symbol", rewriter.getStringAttr(
+                                 ("custom_flagtree_split_" + suffix).str()));
+    split->setAttr("max_rank", rewriter.getI64IntegerAttr(1));
+    split->setAttr("no_side_effect", rewriter.getUnitAttr());
+    SmallVector<Value> results;
+    for (int channel = 0; channel < 2; ++channel) {
+      Value result = split->getResult(channel);
+      if (narrow) {
+        auto narrowFlatType = RankedTensorType::get({count}, element);
+        result = castPermutationStorage(result, narrowFlatType, loc, rewriter);
+        Value shape = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getI64TensorAttr(outType.getShape()));
+        result =
+            rewriter.create<tensor::ReshapeOp>(loc, outType, result, shape);
+      } else {
+        result = reshape(result, outType.getShape());
+      }
+      results.push_back(result);
+    }
+    rewriter.replaceOp(op, results);
+    return success();
+  }
 
   int64_t rank = inputType.getRank();
   SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
@@ -2027,7 +2435,6 @@ SplitConverter::matchAndRewrite(triton::SplitOp op, OpAdaptor adaptor,
   SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
   strides.back() = rewriter.getIndexAttr(2);
 
-  auto outType = dyn_cast<RankedTensorType>(op.getOutLHS().getType());
   auto sizes = llvm::map_to_vector(outType.getShape(), [&](int64_t t) {
     return OpFoldResult(rewriter.getIndexAttr(t));
   });
@@ -2140,11 +2547,106 @@ LogicalResult DeviceAssertConverter::matchAndRewrite(
   return success();
 }
 
+// CANN's Vector/Cube junction analysis does not trace tensor bitcast views or
+// values produced by explicitly Vector-only custom operations.
+// Keep vector side consumers in UB, and give only the Cube consumer a separate
+// FP32 L1 buffer, populated through the native per-program GM workspace path.
+// An explicit workspace also prevents early empty-tensor CSE from merging the
+// GM staging buffer with a vector or L1 destination.
+static Value legalizeVectorDotOperand(Value value, Operation *dot,
+                                      RewriterBase &rewriter) {
+  auto type = dyn_cast<RankedTensorType>(value.getType());
+  if (!isAscend910B(dot) || !type || type.getEncoding() ||
+      !type.hasStaticShape() || !type.getElementType().isF32())
+    return value;
+
+  SmallVector<Value> worklist{value};
+  llvm::SmallPtrSet<Operation *, 16> visited;
+  bool needsTransfer = false;
+  while (!worklist.empty()) {
+    auto *producer = worklist.pop_back_val().getDefiningOp();
+    if (!producer || !visited.insert(producer).second)
+      continue;
+    // Indirect producers may not have been converted yet: an already-legal
+    // arith op can still use tt.bitcast while the dot pattern is visited.
+    if (isa<arith::BitcastOp, triton::BitcastOp>(producer)) {
+      needsTransfer = true;
+      break;
+    }
+    if (auto custom = dyn_cast<hivm::CustomOp>(producer)) {
+      if (custom.getCoreType() == hivm::TCoreType::VECTOR) {
+        needsTransfer = true;
+        break;
+      }
+    }
+    if (isa<tensor::CastOp, tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+            tensor::ReshapeOp, tensor::ExtractSliceOp, linalg::TransposeOp,
+            triton::TransOp, triton::ReshapeOp, triton::ExpandDimsOp,
+            triton::BroadcastOp>(producer)) {
+      worklist.push_back(producer->getOperand(0));
+    } else if (producer->hasTrait<OpTrait::Elementwise>()) {
+      // Later CANN folds may remove an intervening +0, *1, or select. Establish
+      // the same valid boundary for Vector-derived elementwise expressions,
+      // without trying to predict those folds or changing their FP semantics.
+      for (Value operand : producer->getOperands())
+        if (isa<RankedTensorType>(operand.getType()))
+          worklist.push_back(operand);
+    }
+  }
+  if (!needsTransfer)
+    return value;
+
+  constexpr StringLiteral transferMarker = "flagtree.vector_to_cube";
+  // Repeated dot uses of the same computed value share its transfer. Restrict
+  // reuse to this block and an earlier compiler-created pair: no motion across
+  // control flow, user stores, or potentially different workspace lifetimes.
+  for (Operation *user : value.getUsers()) {
+    auto store = dyn_cast<hivm::StoreOp>(user);
+    if (!store || !store->hasAttr(transferMarker))
+      continue;
+    for (Operation *reader : store->getResult(0).getUsers()) {
+      auto load = dyn_cast<hivm::LoadOp>(reader);
+      if (load && load->getBlock() == dot->getBlock() &&
+          load->isBeforeInBlock(dot) && load->getResult(0).getType() == type)
+        return load->getResult(0);
+    }
+  }
+
+  auto loc = dot->getLoc();
+  auto workspaceType = MemRefType::get(type.getShape(), type.getElementType());
+  Value workspaceBuffer =
+      rewriter.create<bishengir::memref_ext::AllocWorkspaceOp>(
+          loc, workspaceType, Value(), ValueRange{}, ValueRange{});
+  Value workspace = rewriter.create<bufferization::ToTensorOp>(
+      loc, type, workspaceBuffer, true, true);
+  auto store =
+      rewriter.create<hivm::StoreOp>(loc, TypeRange{type}, value, workspace);
+  store->setAttr(transferMarker, rewriter.getUnitAttr());
+  Value l1 =
+      rewriter.create<bufferization::AllocTensorOp>(loc, type, ValueRange{});
+  return rewriter
+      .create<hivm::LoadOp>(loc, TypeRange{type}, store->getResult(0), l1)
+      ->getResult(0);
+}
+
+void legalizeVectorDotOperands(ModuleOp module) {
+  IRRewriter rewriter(module.getContext());
+  module.walk([&](Operation *op) {
+    if (!isa<linalg::MatmulOp, linalg::BatchMatmulOp>(op))
+      return;
+    rewriter.setInsertionPoint(op);
+    for (unsigned i = 0; i < 2; ++i)
+      op->setOperand(i,
+                     legalizeVectorDotOperand(op->getOperand(i), op, rewriter));
+  });
+}
+
 LogicalResult
 MatmulConverter::matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
                                  ConversionPatternRewriter &rewriter) const {
-  auto opa = adaptor.getA();
-  auto opb = adaptor.getB();
+  // Preserve source bitcasts before generic elementwise lowering can hide them.
+  auto opa = legalizeVectorDotOperand(adaptor.getA(), op, rewriter);
+  auto opb = legalizeVectorDotOperand(adaptor.getB(), op, rewriter);
   auto opc = adaptor.getC();
   auto dstType = cast<RankedTensorType>(op.getType());
   auto elemTy = dstType.getElementType();

@@ -21,6 +21,7 @@
  */
 
 #include "incubated/Conversion/TritonToLinalgIncubated/LoadStoreConverter.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/MaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
@@ -80,6 +81,34 @@ using namespace triton;
 using namespace Incubated;
 const std::string MayImplicitTransposeWithLastAxisTAG =
     "MayImplicitTransposeWithLastAxis";
+
+// A packed consumer can make a short-row strided GM load scalar in CANN.
+// Lower full unmasked tiles through a bounded DMA/vector primitive; dense GM
+// tensors and loads with cache/volatile semantics keep their original path.
+static bool supportsShortRowLoad(Operation *op, MemRefType type) {
+  auto module = op->getParentOfType<ModuleOp>();
+  auto target = module ? module->getAttrOfType<hacc::TargetAttr>("hacc.target")
+                       : hacc::TargetAttr();
+  if (compileOn91095Flag || !target ||
+      !target.getTarget().getValue().starts_with("Ascend910B") ||
+      type.getRank() != 2 || !type.hasStaticShape() || type.getDimSize(0) <= 1)
+    return false;
+  auto elem = type.getElementType();
+  if (!(elem.isF16() || elem.isBF16() || elem.isF32() || elem.isInteger(16) ||
+        elem.isInteger(32)))
+    return false;
+  int64_t cols = type.getDimSize(1), block = 256 / elem.getIntOrFloatBitWidth();
+  SmallVector<int64_t> strides;
+  int64_t offset;
+#if LLVM_VERSION_MAJOR < 22
+  auto layout = getStridesAndOffset(type, strides, offset);
+#else
+  auto layout = type.getStridesAndOffset(strides, offset);
+#endif
+  return cols > 0 && cols < block && succeeded(layout) && strides[1] == 1 &&
+         !ShapedType::isDynamic(strides[0]) && strides[0] > cols &&
+         strides[0] <= UINT32_MAX / (elem.getIntOrFloatBitWidth() / 8);
+}
 
 LogicalResult
 AddPtrConverter::matchAndRewrite(triton::AddPtrOp op, OpAdaptor adaptor,
@@ -315,6 +344,41 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
        mlir::ConverterUtils::isaPermutedMemRefType(memRefType));
   auto memRefShape = memRefType.getShape();
   auto memRefElementType = memRefType.getElementType();
+
+  auto logicalType = dyn_cast<RankedTensorType>(op.getResult().getType());
+  if (logicalType && !logicalType.getEncoding() && !mask &&
+      op.getBoundaryCheck().empty() && !op.getIsVolatile() &&
+      op.getCache() == triton::CacheModifier::NONE &&
+      op.getEvict() == triton::EvictionPolicy::NORMAL &&
+      !op->hasAttr(ConverterUtils::discreteAttrName) &&
+      supportsShortRowLoad(op, memRefType)) {
+    auto resultType = RankedTensorType::get(memRefShape, memRefElementType);
+    Value result = rewriter.create<bufferization::AllocTensorOp>(
+        loc, resultType, ValueRange{});
+    int64_t slots = std::min(int64_t(128), memRefShape[0]) * 8;
+    auto workType = MemRefType::get(
+        {slots}, rewriter.getI32Type(), MemRefLayoutAttrInterface(),
+        hivm::AddressSpaceAttr::get(rewriter.getContext(),
+                                    hivm::AddressSpace::UB));
+    Value work = rewriter.create<memref::AllocOp>(loc, workType);
+    auto load = rewriter.create<hivm::CustomOp>(
+        loc, TypeRange{resultType}, "flagtree.short_row_load", ValueRange{ptr},
+        ValueRange{result, work}, ValueRange{});
+    load.setCoreType(hivm::TCoreType::VECTOR);
+    load.setPipe(hivm::PIPE::PIPE_V);
+    load.setVFMode(hivm::VFMode::SIMD);
+    StringRef suffix = memRefElementType.isF16()         ? "half"
+                       : memRefElementType.isBF16()      ? "bf16"
+                       : memRefElementType.isF32()       ? "float"
+                       : memRefElementType.isInteger(16) ? "int16"
+                                                         : "int32";
+    load->setAttr("symbol",
+                  rewriter.getStringAttr(
+                      ("custom_flagtree_short_row_load_" + suffix).str()));
+    load->setAttr("max_rank", rewriter.getI64IntegerAttr(2));
+    rewriter.replaceOp(op, load->getResult(0));
+    return success();
+  }
 
   Value allocOp;
   Value allocOpTmp;
@@ -1126,6 +1190,72 @@ AtomicMaxMinCanonicalizer::matchAndRewrite(triton::AtomicRMWOp op,
 StoreConverter::StoreConverter(MLIRContext *context)
     : OpConversionPattern<triton::StoreOp>(context) {}
 
+// A short logical row can become physically compact after a permutation.
+// CANN's 2D store then uses scalar GM writes; concurrent disjoint short-row
+// stores have been observed to lose values on this path. Reserve planned UB
+// scratch for a vector repack followed by byte-counted DMA. This applies to
+// ordinary stores too, independently of the producer of the stored tensor.
+static bool tryShortRowStore(Operation *op, Value value, Value destination,
+                             Location loc,
+                             ConversionPatternRewriter &rewriter) {
+  auto module = op->getParentOfType<ModuleOp>();
+  auto target = module ? module->getAttrOfType<hacc::TargetAttr>("hacc.target")
+                       : hacc::TargetAttr();
+  auto type = dyn_cast<RankedTensorType>(value.getType());
+  auto original = dyn_cast<RankedTensorType>(op->getOperand(1).getType());
+  auto dst = dyn_cast<MemRefType>(destination.getType());
+  if (compileOn91095Flag || !target ||
+      !target.getTarget().getValue().starts_with("Ascend910B") || !type ||
+      type.getEncoding() || type.getRank() != 2 || !original ||
+      !original.hasStaticShape() || original.getRank() != 2 || !dst ||
+      dst.getRank() != 2)
+    return false;
+  auto elem = type.getElementType();
+  if (!(elem.isF16() || elem.isBF16() || elem.isF32() || elem.isInteger(16) ||
+        elem.isInteger(32)))
+    return false;
+  int64_t rows = original.getDimSize(0), cols = original.getDimSize(1);
+  int64_t blockElements = 256 / elem.getIntOrFloatBitWidth();
+  SmallVector<int64_t> strides;
+  int64_t offset;
+#if LLVM_VERSION_MAJOR < 22
+  auto layout = getStridesAndOffset(dst, strides, offset);
+#else
+  auto layout = dst.getStridesAndOffset(strides, offset);
+#endif
+  // The masked slice may have dynamic extents. Its static physical row stride
+  // bounds the short row; actual sizes are passed to the device implementation.
+  if (rows <= 1 || cols <= 0 || cols >= blockElements || failed(layout) ||
+      strides[1] != 1 || ShapedType::isDynamic(strides[0]) ||
+      strides[0] < cols ||
+      strides[0] > UINT32_MAX / (elem.getIntOrFloatBitWidth() / 8))
+    return false;
+  int64_t slots = std::min(int64_t(1024) / blockElements, rows) * blockElements;
+  auto scratchType = MemRefType::get(
+      {slots}, rewriter.getI32Type(), MemRefLayoutAttrInterface(),
+      hivm::AddressSpaceAttr::get(rewriter.getContext(),
+                                  hivm::AddressSpace::UB));
+  Value addresses = rewriter.create<memref::AllocOp>(loc, scratchType);
+  Value scratch = rewriter.create<memref::AllocOp>(loc, scratchType);
+  auto store = rewriter.create<hivm::CustomOp>(
+      loc, TypeRange{}, "flagtree.short_row_store", ValueRange{value},
+      ValueRange{destination, addresses, scratch}, ValueRange{});
+  store.setCoreType(hivm::TCoreType::VECTOR);
+  // The implementation returns to PIPE_V only after its internal DMA finishes.
+  store.setPipe(hivm::PIPE::PIPE_V);
+  store.setVFMode(hivm::VFMode::SIMD);
+  StringRef suffix = elem.isF16()         ? "half"
+                     : elem.isBF16()      ? "bf16"
+                     : elem.isF32()       ? "float"
+                     : elem.isInteger(16) ? "int16"
+                                          : "int32";
+  store->setAttr("symbol",
+                 rewriter.getStringAttr(
+                     ("custom_flagtree_short_row_store_" + suffix).str()));
+  store->setAttr("max_rank", rewriter.getI64IntegerAttr(2));
+  return true;
+}
+
 LogicalResult
 StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const {
@@ -1177,6 +1307,10 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
         val, srcOffsets, boundarySizes, loc, rewriter);
     auto dstSubview = mlir::ConverterUtils::makeSubViewOp(
         ptr, dstOffsets, boundarySizes, loc, rewriter);
+    if (tryShortRowStore(op, srcSlice, dstSubview, loc, rewriter)) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
         loc, srcSlice, dstSubview);
     storeOp.setWritable(true);
@@ -1186,6 +1320,10 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
 
   // 2. Simple load with no mask
   if (!mask) {
+    if (tryShortRowStore(op, val, ptr, loc, rewriter)) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
         loc, val, ptr);
     storeOp.setWritable(true);
@@ -1205,6 +1343,10 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   LLVM_DEBUG({ llvm::dbgs() << *getModuleOpFromOperation(op) << "\n"; });
   auto srcSlice = mstate.getExtractSlice(val, loc, rewriter);
   auto dstSubview = mstate.getSubview(ptr, loc, rewriter);
+  if (tryShortRowStore(op, srcSlice, dstSubview, loc, rewriter)) {
+    rewriter.eraseOp(op);
+    return success();
+  }
   auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
       loc, srcSlice, dstSubview);
   storeOp.setWritable(true);

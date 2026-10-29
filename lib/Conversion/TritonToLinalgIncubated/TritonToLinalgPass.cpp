@@ -53,6 +53,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -85,6 +86,7 @@
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/MathConverter.h"
 #endif
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include <cassert>
 #include <cstdint>
 #include <optional>
@@ -452,13 +454,13 @@ void TritonToLinalgIncubatedPass::convertTTFunc(triton::FuncOp func,
 
 void TritonToLinalgIncubatedPass::addDynamicLegal(
     ConversionTarget &target, TritonTypeConverter &tritonTypeConverter) {
-  target.addLegalDialect<func::FuncDialect, arith::ArithDialect,
-                         math::MathDialect, linalg::LinalgDialect,
-                         affine::AffineDialect, scf::SCFDialect,
-                         cf::ControlFlowDialect, tensor::TensorDialect,
-                         LLVM::LLVMDialect, bufferization::BufferizationDialect,
-                         memref::MemRefDialect, annotation::AnnotationDialect,
-                         hivm::HIVMDialect, hfusion::HFusionDialect>();
+  target.addLegalDialect<
+      func::FuncDialect, arith::ArithDialect, math::MathDialect,
+      linalg::LinalgDialect, affine::AffineDialect, scf::SCFDialect,
+      cf::ControlFlowDialect, tensor::TensorDialect, LLVM::LLVMDialect,
+      bufferization::BufferizationDialect, memref::MemRefDialect,
+      annotation::AnnotationDialect, hivm::HIVMDialect, hfusion::HFusionDialect,
+      bishengir::memref_ext::MemRefExtDialect>();
 
   // add legal dialect on condition
   target.addLegalOp<ModuleOp>();
@@ -694,7 +696,8 @@ void TritonToLinalgIncubatedPass::getDependentDialects(
                   linalg::LinalgDialect, affine::AffineDialect, scf::SCFDialect,
                   tensor::TensorDialect, bufferization::BufferizationDialect,
                   memref::MemRefDialect, hfusion::HFusionDialect,
-                  hivm::HIVMDialect, annotation::AnnotationDialect>();
+                  hivm::HIVMDialect, annotation::AnnotationDialect,
+                  bishengir::memref_ext::MemRefExtDialect>();
 }
 
 LogicalResult
@@ -812,10 +815,237 @@ TritonToLinalgIncubatedPass::processLegalStrideOperations(ModuleOp moduleOp) {
   return success();
 }
 
+namespace {
+// A one-element view's stride has no effect on its address. CANN's strided
+// byte-copy path mishandles this degenerate case. Normalize only zero-offset
+// rank-one views: reinterpret_cast replaces rather than adds the old offset.
+struct NormalizeUnitCopyStride : OpRewritePattern<memref::CopyOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(memref::CopyOp op,
+                                PatternRewriter &rewriter) const override {
+    auto normalize = [&](Value value) -> Value {
+      auto type = dyn_cast<MemRefType>(value.getType());
+      if (!type || type.getRank() != 1 || type.getDimSize(0) != 1 ||
+          (!type.getLayout().isIdentity() &&
+           !isa<StridedLayoutAttr>(type.getLayout())))
+        return value;
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+      auto [strides, offset] = type.getStridesAndOffset();
+#else
+      auto [strides, offset] = getStridesAndOffset(type);
+#endif
+      if (offset != 0 || strides[0] == 1)
+        return value;
+      auto normalizedType =
+          MemRefType::get({1}, type.getElementType(),
+                          MemRefLayoutAttrInterface{}, type.getMemorySpace());
+      SmallVector<OpFoldResult> ones{rewriter.getIndexAttr(1)};
+      return rewriter.create<memref::ReinterpretCastOp>(
+          op.getLoc(), normalizedType, value, rewriter.getIndexAttr(0), ones,
+          ones);
+    };
+    Value source = normalize(op.getSource());
+    Value target = normalize(op.getTarget());
+    if (source == op.getSource() && target == op.getTarget())
+      return failure();
+    rewriter.replaceOpWithNewOp<memref::CopyOp>(op, source, target);
+    return success();
+  }
+};
+
+// Resolve exact inverse pairs before either operation acquires a physical UB
+// layout. Other users of the split results remain valid and are not modified.
+struct FoldJoinOfSplit : OpRewritePattern<triton::JoinOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(triton::JoinOp op,
+                                PatternRewriter &rewriter) const override {
+    auto split = op.getLhs().getDefiningOp<triton::SplitOp>();
+    if (!split || op.getLhs() != split.getOutLHS() ||
+        op.getRhs() != split.getOutRHS() ||
+        op.getType() != split.getSrc().getType())
+      return failure();
+    rewriter.replaceOp(op, split.getSrc());
+    return success();
+  }
+};
+
+// Move channel selection before a transpose. The optional reshape may only
+// factor the last axis; it must preserve the other axes and element order.
+// This is a shape identity, independent of dtype, tile length, or consumers.
+// It avoids manufacturing an aligned UB buffer for each scalar channel.
+struct SplitBeforeTranspose : OpRewritePattern<triton::SplitOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(triton::SplitOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getSrc();
+    auto inputType = cast<RankedTensorType>(input.getType());
+    if (!inputType.hasStaticShape() || inputType.getEncoding())
+      return failure();
+    Value transposed = input;
+    if (auto reshape = input.getDefiningOp<triton::ReshapeOp>()) {
+      // allow_reorder changes which logical element a reshape denotes.
+      if (reshape.getAllowReorder())
+        return failure();
+      transposed = reshape.getSrc();
+    }
+    auto trans = transposed.getDefiningOp<triton::TransOp>();
+    if (!trans)
+      return failure();
+    auto transType = cast<RankedTensorType>(transposed.getType());
+    auto baseType = cast<RankedTensorType>(trans.getSrc().getType());
+    int64_t rank = transType.getRank();
+    if (!rank || !transType.hasStaticShape() || transType.getEncoding() ||
+        baseType.getEncoding() || inputType.getRank() < rank)
+      return failure();
+    for (int64_t i = 0; i < rank - 1; ++i)
+      if (inputType.getDimSize(i) != transType.getDimSize(i))
+        return failure();
+    int64_t tail = 1;
+    for (int64_t i = rank - 1; i < inputType.getRank(); ++i)
+      tail *= inputType.getDimSize(i);
+    if (tail != transType.getDimSize(rank - 1) || tail % 2)
+      return failure();
+
+    // Keep the selected axis (possibly size one), transpose it, and reshape
+    // away the split axis. Later canonicalization can compose nested slices.
+    auto order = trans.getOrder();
+    int64_t axis = order.back();
+    SmallVector<int64_t> sliceShape(baseType.getShape());
+    sliceShape[axis] /= 2;
+    auto sliceType =
+        RankedTensorType::get(sliceShape, baseType.getElementType());
+    SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> sizes, strides(rank, rewriter.getIndexAttr(1));
+    for (auto n : sliceShape)
+      sizes.push_back(rewriter.getIndexAttr(n));
+    strides[axis] = rewriter.getIndexAttr(2);
+    SmallVector<int64_t> selectedShape(transType.getShape());
+    selectedShape.back() /= 2;
+    auto selectedType =
+        RankedTensorType::get(selectedShape, baseType.getElementType());
+    auto resultType = cast<RankedTensorType>(op.getOutLHS().getType());
+    SmallVector<Value> results;
+    for (int channel = 0; channel < 2; ++channel) {
+      offsets[axis] = rewriter.getIndexAttr(channel);
+      Value slice = rewriter.create<tensor::ExtractSliceOp>(
+          op.getLoc(), sliceType, trans.getSrc(), offsets, sizes, strides);
+      Value selected = rewriter.create<triton::TransOp>(
+          op.getLoc(), selectedType, slice, order);
+      if (selectedType != resultType)
+        selected = rewriter.create<triton::ReshapeOp>(
+            op.getLoc(), resultType.getShape(), selected, false);
+      results.push_back(selected);
+    }
+    rewriter.replaceOp(op, results);
+    return success();
+  }
+};
+} // namespace
+
+// Prove the original load/store graph before dialect conversion creates
+// replacement users. ConversionPatternRewriter defers replacing old uses, so
+// use counts on a partially converted graph cannot prove this fast path.
+static bool isDensePermutationOffsets(Value value) {
+  if (value.getDefiningOp<triton::MakeRangeOp>())
+    return true;
+  if (auto add = value.getDefiningOp<arith::AddIOp>())
+    return (isDensePermutationOffsets(add.getLhs()) &&
+            add.getRhs().getDefiningOp<triton::SplatOp>()) ||
+           (isDensePermutationOffsets(add.getRhs()) &&
+            add.getLhs().getDefiningOp<triton::SplatOp>());
+  return false;
+}
+
+static bool isDensePermutationPointer(Value value) {
+  auto add = value.getDefiningOp<triton::AddPtrOp>();
+  return add && add.getPtr().getDefiningOp<triton::SplatOp>() &&
+         isDensePermutationOffsets(add.getOffset());
+}
+
+static bool isSingleUsePermutationLoad(Value value) {
+  while (value.hasOneUse()) {
+    if (auto reshape = value.getDefiningOp<triton::ReshapeOp>()) {
+      if (reshape.getAllowReorder())
+        return false;
+      value = reshape.getSrc();
+      continue;
+    }
+    auto load = value.getDefiningOp<triton::LoadOp>();
+    return load && !load.getMask() && load.getBoundaryCheck().empty() &&
+           isDensePermutationPointer(load.getPtr());
+  }
+  return false;
+}
+
+static bool isSingleUsePermutationStore(Value value) {
+  while (value.hasOneUse()) {
+    Operation *user = *value.getUsers().begin();
+    if (auto reshape = dyn_cast<triton::ReshapeOp>(user)) {
+      if (reshape.getAllowReorder())
+        return false;
+      value = reshape.getResult();
+      continue;
+    }
+    auto store = dyn_cast<triton::StoreOp>(user);
+    return store && store.getValue() == value && !store.getMask() &&
+           store.getBoundaryCheck().empty() &&
+           isDensePermutationPointer(store.getPtr());
+  }
+  return false;
+}
+
+static void markDenseNativePermutations(ModuleOp module) {
+  module.walk([&](Operation *op) {
+    if (!isa<triton::SplitOp, triton::JoinOp>(op))
+      return;
+    op->removeAttr("flagtree.dense_native_permutation");
+    bool dense = false;
+    if (auto split = dyn_cast<triton::SplitOp>(op))
+      dense = isSingleUsePermutationLoad(split.getSrc()) &&
+              isSingleUsePermutationStore(split.getOutLHS()) &&
+              isSingleUsePermutationStore(split.getOutRHS());
+    else if (auto join = dyn_cast<triton::JoinOp>(op))
+      dense = isSingleUsePermutationLoad(join.getLhs()) &&
+              isSingleUsePermutationLoad(join.getRhs()) &&
+              isSingleUsePermutationStore(join.getResult());
+    if (dense)
+      op->setAttr("flagtree.dense_native_permutation",
+                  UnitAttr::get(module.getContext()));
+  });
+}
+
 void TritonToLinalgIncubatedPass::runOnOperation() {
   compileOn91095Flag = this->compileOn91095;
 
   auto moduleOp = getOperation();
+
+  // Inverse pairs must fold before split is rewritten to channel slices.
+  // These are targeted semantic rewrites, not an extra canonicalization pass
+  // over unrelated pointer arithmetic, masks, or control flow.
+  GreedyRewriteConfig permutationConfig;
+  permutationConfig.enableFolding(false).setRegionSimplificationLevel(
+      GreedySimplifyRegionLevel::Disabled);
+  RewritePatternSet inversePatterns(&getContext());
+  inversePatterns.add<FoldJoinOfSplit>(&getContext());
+  if (failed(applyPatternsGreedily(moduleOp, std::move(inversePatterns),
+                                   permutationConfig))) {
+    signalPassFailure();
+    return;
+  }
+  auto permutationTarget =
+      moduleOp->getAttrOfType<hacc::TargetAttr>("hacc.target");
+  if (!compileOn91095Flag && permutationTarget &&
+      permutationTarget.getTarget().getValue().starts_with("Ascend910B")) {
+    RewritePatternSet splitPatterns(&getContext());
+    splitPatterns.add<SplitBeforeTranspose>(&getContext());
+    if (failed(applyPatternsGreedily(moduleOp, std::move(splitPatterns),
+                                     permutationConfig))) {
+      signalPassFailure();
+      return;
+    }
+  }
+
+  markDenseNativePermutations(moduleOp);
 
   // Check if the kernel contains tl.dot. Without tl.dot,
   // the kernel would be pure AIV kernel.
@@ -983,6 +1213,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   if (failed(processLegalStrideOperations(moduleOp))) {
     signalPassFailure();
   }
+
+  // Dialect conversion can visit dot before split/transpose producers. Inspect
+  // their final Vector custom ops after all replacement values are installed.
+  TTOpConverters::legalizeVectorDotOperands(moduleOp);
 
   // 8. Convert function prologue/epilogue.
   moduleOp.walk([&](triton::FuncOp func) {
@@ -1192,6 +1426,19 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
     func->setAttr("WorkspaceArgIdx",
                   IntegerAttr::get(IntegerType::get(&getContext(), 64),
                                    1)); // 64: 64位整型
+  }
+
+  // Normalize copies created during load/store conversion, after the partial
+  // conversion has completed and before CANN chooses a strided DMA template.
+  if (!compileOn91095Flag && permutationTarget &&
+      permutationTarget.getTarget().getValue().starts_with("Ascend910B")) {
+    RewritePatternSet copyPatterns(&getContext());
+    copyPatterns.add<NormalizeUnitCopyStride>(&getContext());
+    if (failed(applyPatternsGreedily(moduleOp, std::move(copyPatterns),
+                                     permutationConfig))) {
+      signalPassFailure();
+      return;
+    }
   }
 
   // Fix the Location info
