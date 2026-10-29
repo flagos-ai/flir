@@ -37,6 +37,8 @@ void TensorViewDialect::registerAttributes() {
 // Custom assembly helpers for the encoding attributes.
 //
 //   #tv.partition_view<tile = [128], dim_map = [0], padding_value = zero>
+//   #tv.gather_scatter_view<tile = [8, 64], sparse_dim = [0],
+//                           padding_value = zero, bounds_check = true>
 //===----------------------------------------------------------------------===//
 
 // Parse `<keyword> = [i64, i64, ...]`.
@@ -154,14 +156,22 @@ Attribute GatherScatterViewAttr::parse(AsmParser &parser, Type) {
   llvm::SMLoc loc = parser.getCurrentLocation();
   SmallVector<int64_t> tile, sparseDim;
   PaddingValue paddingValue;
+  bool boundsCheck = false;
   if (parser.parseLess() || parseKeywordIntArray(parser, "tile", tile) ||
       parser.parseComma() ||
       parseKeywordIntArray(parser, "sparse_dim", sparseDim) ||
-      parser.parseComma() || parsePaddingValue(parser, paddingValue) ||
-      parser.parseGreater())
+      parser.parseComma() || parsePaddingValue(parser, paddingValue))
+    return {};
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseKeyword("bounds_check") || parser.parseEqual() ||
+        parser.parseKeyword("true"))
+      return {};
+    boundsCheck = true;
+  }
+  if (parser.parseGreater())
     return {};
   return getChecked([&] { return parser.emitError(loc); }, parser.getContext(),
-                    tile, sparseDim, paddingValue);
+                    tile, sparseDim, paddingValue, boundsCheck);
 }
 
 void GatherScatterViewAttr::print(AsmPrinter &printer) const {
@@ -171,6 +181,8 @@ void GatherScatterViewAttr::print(AsmPrinter &printer) const {
   printIntArray(printer, "sparse_dim", getSparseDim());
   printer << ", ";
   printPaddingValue(printer, getPaddingValue());
+  if (getBoundsCheck())
+    printer << ", bounds_check = true";
   printer << ">";
 }
 
@@ -215,8 +227,7 @@ StridedViewAttr::verify(function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 GatherScatterViewAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                               ArrayRef<int64_t> tile,
-                              ArrayRef<int64_t> sparseDim,
-                              PaddingValue) {
+                              ArrayRef<int64_t> sparseDim, PaddingValue, bool) {
   if (tile.empty())
     return emitError() << "gather_scatter_view tile must be non-empty";
   if (sparseDim.empty())
