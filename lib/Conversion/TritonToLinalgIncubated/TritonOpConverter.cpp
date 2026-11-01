@@ -482,6 +482,13 @@ SelectCanonicalizer::matchAndRewrite(arith::SelectOp op,
         op, "Cannot lower continuous masked selects");
   }
 
+  if (llvm::any_of(mstate.dims, [](OpFoldResult dim) {
+        return getConstantIntValue(dim) == 0;
+      })) {
+    rewriter.replaceOp(op, op.getFalseValue());
+    return success();
+  }
+
   // 2. Get mask position
   MaskPosition maskPos = mstate.getMaskPosition(tensorShape);
   LLVM_DEBUG({

@@ -585,6 +585,17 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
         subOpFoldResult(rhsState.scalar, lhsState.start, loc, builder);
     auto newDim = builder.getIndexAttr(1);
 
+    // Equality outside the range selects no elements. Keeping a unit slice
+    // there would produce a negative offset or extend past the source.
+    auto constantOffset = getConstantIntValue(newOffset);
+    auto constantExtent = getConstantIntValue(lhsState.dims[cmpDim]);
+    if (constantOffset &&
+        (*constantOffset < 0 ||
+         (constantExtent && *constantOffset >= *constantExtent))) {
+      newOffset = builder.getIndexAttr(0);
+      newDim = builder.getIndexAttr(0);
+    }
+
     this->offsets[cmpDim] = newOffset;
     this->dims[cmpDim] = newDim;
     break;
