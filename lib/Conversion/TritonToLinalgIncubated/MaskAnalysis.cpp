@@ -403,7 +403,20 @@ LogicalResult MaskState::parseAdd(arith::AddIOp addOp, const Location &loc,
   if (failed(rhsState.parse(addOp.getRhs(), loc, builder))) {
     return failure();
   }
-  return this->addStates(lhsState, rhsState, loc, builder);
+  auto result = this->addStates(lhsState, rhsState, loc, builder);
+  auto type = dyn_cast<RankedTensorType>(addOp.getType());
+  auto integer = type ? dyn_cast<IntegerType>(type.getElementType()) : IntegerType();
+  if (succeeded(result) && start && end && integer && integer.getWidth() < 64) {
+    auto lower = getConstantIntValue(start);
+    auto upper = getConstantIntValue(end);
+    int64_t limit = int64_t{1} << (integer.getWidth() - 1);
+    // Index arithmetic is wider than the original element type. A wrapped
+    // integer range is not a contiguous interval; retain the original mask.
+    if (lower && upper &&
+        (*lower < -limit || *lower >= limit || *upper > limit))
+      return failure();
+  }
+  return result;
 }
 
 LogicalResult MaskState::parseDiv(arith::DivSIOp divOp, const Location &loc,

@@ -212,3 +212,36 @@ func.func @dynamic_start(%t: tensor<32xf32>, %f: tensor<32xf32>, %scalar: i32) -
   %v = arith.select %eq, %t, %f : tensor<32xi1>, tensor<32xf32>
   return %v : tensor<32xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @wrapped_i32(
+// CHECK-NOT: tensor.extract_slice
+// CHECK: arith.select
+// CHECK: return
+func.func @wrapped_i32(%t: tensor<32xf32>, %f: tensor<32xf32>) -> tensor<32xf32> {
+  %r = tt.make_range {start = 0 : i32, end = 32 : i32} : tensor<32xi32>
+  %shift = arith.constant dense<2147483647> : tensor<32xi32>
+  %wrapped = arith.addi %r, %shift : tensor<32xi32>
+  %bound = arith.constant dense<-2147483648> : tensor<32xi32>
+  %eq = arith.cmpi eq, %wrapped, %bound : tensor<32xi32>
+  %v = arith.select %eq, %t, %f : tensor<32xi1>, tensor<32xf32>
+  return %v : tensor<32xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @wrapped_then_extended(
+// CHECK-NOT: tensor.extract_slice
+// CHECK: arith.select
+// CHECK: return
+func.func @wrapped_then_extended(%t: tensor<32xf32>, %f: tensor<32xf32>) -> tensor<32xf32> {
+  %r = tt.make_range {start = 0 : i32, end = 32 : i32} : tensor<32xi32>
+  %shift = arith.constant dense<2147483647> : tensor<32xi32>
+  %wrapped = arith.addi %r, %shift : tensor<32xi32>
+  %i = arith.extsi %wrapped : tensor<32xi32> to tensor<32xi64>
+  %bound = arith.constant dense<-2147483648> : tensor<32xi64>
+  %eq = arith.cmpi eq, %i, %bound : tensor<32xi64>
+  %v = arith.select %eq, %t, %f : tensor<32xi1>, tensor<32xf32>
+  return %v : tensor<32xf32>
+}
