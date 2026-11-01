@@ -405,7 +405,8 @@ LogicalResult MaskState::parseAdd(arith::AddIOp addOp, const Location &loc,
   }
   auto result = this->addStates(lhsState, rhsState, loc, builder);
   auto type = dyn_cast<RankedTensorType>(addOp.getType());
-  auto integer = type ? dyn_cast<IntegerType>(type.getElementType()) : IntegerType();
+  auto integer =
+      type ? dyn_cast<IntegerType>(type.getElementType()) : IntegerType();
   if (succeeded(result) && start && end && integer && integer.getWidth() < 64) {
     auto lower = getConstantIntValue(start);
     auto upper = getConstantIntValue(end);
