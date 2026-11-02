@@ -283,3 +283,50 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
   return %result : tensor<1024xf32>
  }
 }
+
+// -----
+
+// Shared native expressions must be visited once, even with no Cube source.
+// CHECK-LABEL: func.func @shared_native_dag(
+// CHECK-NOT: flagtree.cube_to_vector
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+ func.func @shared_native_dag(%input: tensor<32x64xf32>) -> tensor<1024xf32> {
+  %node0 = arith.addf %input, %input : tensor<32x64xf32>
+  %node1 = arith.addf %node0, %node0 : tensor<32x64xf32>
+  %node2 = arith.addf %node1, %node1 : tensor<32x64xf32>
+  %node3 = arith.addf %node2, %node2 : tensor<32x64xf32>
+  %node4 = arith.addf %node3, %node3 : tensor<32x64xf32>
+  %node5 = arith.addf %node4, %node4 : tensor<32x64xf32>
+  %node6 = arith.addf %node5, %node5 : tensor<32x64xf32>
+  %node7 = arith.addf %node6, %node6 : tensor<32x64xf32>
+  %node8 = arith.addf %node7, %node7 : tensor<32x64xf32>
+  %node9 = arith.addf %node8, %node8 : tensor<32x64xf32>
+  %node10 = arith.addf %node9, %node9 : tensor<32x64xf32>
+  %node11 = arith.addf %node10, %node10 : tensor<32x64xf32>
+  %node12 = arith.addf %node11, %node11 : tensor<32x64xf32>
+  %node13 = arith.addf %node12, %node12 : tensor<32x64xf32>
+  %node14 = arith.addf %node13, %node13 : tensor<32x64xf32>
+  %node15 = arith.addf %node14, %node14 : tensor<32x64xf32>
+  %node16 = arith.addf %node15, %node15 : tensor<32x64xf32>
+  %node17 = arith.addf %node16, %node16 : tensor<32x64xf32>
+  %node18 = arith.addf %node17, %node17 : tensor<32x64xf32>
+  %node19 = arith.addf %node18, %node18 : tensor<32x64xf32>
+  %node20 = arith.addf %node19, %node19 : tensor<32x64xf32>
+  %node21 = arith.addf %node20, %node20 : tensor<32x64xf32>
+  %node22 = arith.addf %node21, %node21 : tensor<32x64xf32>
+  %node23 = arith.addf %node22, %node22 : tensor<32x64xf32>
+  %node24 = arith.addf %node23, %node23 : tensor<32x64xf32>
+  %node25 = arith.addf %node24, %node24 : tensor<32x64xf32>
+  %node26 = arith.addf %node25, %node25 : tensor<32x64xf32>
+  %node27 = arith.addf %node26, %node26 : tensor<32x64xf32>
+  %node28 = arith.addf %node27, %node27 : tensor<32x64xf32>
+  %node29 = arith.addf %node28, %node28 : tensor<32x64xf32>
+  %node30 = arith.addf %node29, %node29 : tensor<32x64xf32>
+  %node31 = arith.addf %node30, %node30 : tensor<32x64xf32>
+  %shape = arith.constant dense<[1024, 2]> : tensor<2xi64>
+  %flat = tensor.reshape %node31(%shape) : (tensor<32x64xf32>, tensor<2xi64>) -> tensor<1024x2xf32>
+  %left, %right = tt.split %flat : tensor<1024x2xf32> -> tensor<1024xf32>
+  return %left : tensor<1024xf32>
+ }
+}

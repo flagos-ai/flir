@@ -2754,7 +2754,7 @@ LogicalResult legalizeCubeVectorOperands(ModuleOp module) {
         }
       }
       if (!changed)
-        return value;
+        return transferred[value] = value;
       rewriter.setInsertionPoint(producer);
       auto *clone = rewriter.clone(*producer, mapping);
       return transferred[value] =
@@ -2767,7 +2767,9 @@ LogicalResult legalizeCubeVectorOperands(ModuleOp module) {
           "control flow requires an explicit transfer before the yield");
       return failure();
     }
-    return value;
+    // Memoize native/GM branches too: shared elementwise DAGs must not be
+    // revisited exponentially when their operands require no transfer.
+    return transferred[value] = value;
   };
 
   SmallVector<Operation *> consumers;
