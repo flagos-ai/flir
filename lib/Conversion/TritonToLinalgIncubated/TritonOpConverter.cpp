@@ -2662,8 +2662,8 @@ bool canForwardCubeResult(Operation *op) {
          (op->getNumRegions() == 0 && op->hasTrait<OpTrait::Elementwise>());
 }
 
-// Follow only views and structured control-flow forwarding. Native Vector
-// operations and existing loads establish their own junctions in CANN.
+// Follow views, expressions that later folding may remove, and structured
+// control-flow forwarding. Stop at existing loads and opaque operations.
 bool hasForwardedCubeResult(Value value, llvm::DenseSet<Value> &visited) {
   if (!visited.insert(value).second)
     return false;
@@ -2739,9 +2739,9 @@ LogicalResult legalizeCubeVectorOperands(ModuleOp module) {
       return transferred[value] = load->getResult(0);
     }
     if (producer && canForwardCubeResult(producer)) {
-      // Clone metadata views for this Vector branch. A shared view may also
-      // feed a Cube accumulator or a direct GM output, which must keep its
-      // original value. Insert at the old view so dynamic offsets dominate.
+      // Clone this Vector branch. A shared value may also feed a Cube
+      // accumulator or direct GM output, which must keep its original value.
+      // Insert at the old operation so dynamic offsets still dominate.
       IRMapping mapping;
       bool changed = false;
       for (Value operand : producer->getOperands()) {
