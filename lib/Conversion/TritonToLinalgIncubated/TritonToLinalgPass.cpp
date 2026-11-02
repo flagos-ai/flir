@@ -1217,6 +1217,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   // Dialect conversion can visit dot before split/transpose producers. Inspect
   // their final Vector custom ops after all replacement values are installed.
   TTOpConverters::legalizeVectorDotOperands(moduleOp);
+  if (failed(TTOpConverters::legalizeCubeVectorOperands(moduleOp))) {
+    signalPassFailure();
+    return;
+  }
 
   // 8. Convert function prologue/epilogue.
   moduleOp.walk([&](triton::FuncOp func) {

@@ -28,6 +28,7 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -37,6 +38,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <utility>
 
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -49,6 +51,7 @@
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/CallInterfaces.h"
@@ -2646,6 +2649,148 @@ void legalizeVectorDotOperands(ModuleOp module) {
       op->setOperand(i,
                      legalizeVectorDotOperand(op->getOperand(i), op, rewriter));
   });
+}
+
+namespace {
+bool isCubeResultView(Operation *op) {
+  return isa<tensor::CastOp, tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+             tensor::ReshapeOp, tensor::ExtractSliceOp>(op);
+}
+
+bool canForwardCubeResult(Operation *op) {
+  return isCubeResultView(op) || isa<linalg::TransposeOp>(op) ||
+         (op->getNumRegions() == 0 && op->hasTrait<OpTrait::Elementwise>());
+}
+
+// Follow only views and structured control-flow forwarding. Native Vector
+// operations and existing loads establish their own junctions in CANN.
+bool hasForwardedCubeResult(Value value, llvm::DenseSet<Value> &visited) {
+  if (!visited.insert(value).second)
+    return false;
+  auto follows = [&](Value source) {
+    return hasForwardedCubeResult(source, visited);
+  };
+  if (auto arg = dyn_cast<BlockArgument>(value)) {
+    auto *parent = arg.getOwner()->getParentOp();
+    if (auto loop = dyn_cast<scf::ForOp>(parent)) {
+      if (arg.getArgNumber() == 0)
+        return false;
+      unsigned i = arg.getArgNumber() - 1;
+      return follows(loop.getInitArgs()[i]) ||
+             follows(loop.getBody()->getTerminator()->getOperand(i));
+    }
+    if (auto loop = dyn_cast<scf::WhileOp>(parent)) {
+      unsigned i = arg.getArgNumber();
+      if (arg.getOwner() == &loop.getBefore().front())
+        return follows(loop.getInits()[i]) ||
+               follows(loop.getYieldOp().getOperand(i));
+      return follows(loop.getConditionOp().getArgs()[i]);
+    }
+    return false;
+  }
+  auto *producer = value.getDefiningOp();
+  if (!producer)
+    return false;
+  if (isa<linalg::MatmulOp, linalg::BatchMatmulOp>(producer))
+    return true;
+  if (canForwardCubeResult(producer))
+    return llvm::any_of(producer->getOperands(), follows);
+  unsigned i = cast<OpResult>(value).getResultNumber();
+  if (auto branch = dyn_cast<scf::IfOp>(producer))
+    return follows(
+               branch.getThenRegion().front().getTerminator()->getOperand(i)) ||
+           follows(
+               branch.getElseRegion().front().getTerminator()->getOperand(i));
+  if (auto loop = dyn_cast<scf::ForOp>(producer))
+    return follows(loop.getInitArgs()[i]) ||
+           follows(loop.getBody()->getTerminator()->getOperand(i));
+  if (auto loop = dyn_cast<scf::WhileOp>(producer))
+    return follows(loop.getConditionOp().getArgs()[i]);
+  return false;
+}
+} // namespace
+
+LogicalResult legalizeCubeVectorOperands(ModuleOp module) {
+  // CANN's native junction pass does not handle Vector custom ops or bitcast
+  // consumers of Cube results. Without a load before these consumers,
+  // SplitMixKernel replaces their Cube producer with its empty init tensor.
+  // Let CANN create Fixpipe -> GM workspace -> UB and the matching sync from
+  // an explicit load, before views can hide the matmul result's provenance.
+  IRRewriter rewriter(module.getContext());
+  DenseMap<Value, Value> transferred;
+  std::function<FailureOr<Value>(Value, Operation *)> rewrite =
+      [&](Value value, Operation *consumer) -> FailureOr<Value> {
+    if (auto it = transferred.find(value); it != transferred.end())
+      return it->second;
+    auto *producer = value.getDefiningOp();
+    if (producer && isa<linalg::MatmulOp, linalg::BatchMatmulOp>(producer)) {
+      auto type = cast<RankedTensorType>(value.getType());
+      if (!type.hasStaticShape() || type.getEncoding()) {
+        consumer->emitError(
+            "Cube-to-Vector transfer requires an unencoded static tensor");
+        return failure();
+      }
+      rewriter.setInsertionPointAfter(producer);
+      Value buffer = rewriter.create<bufferization::AllocTensorOp>(
+          producer->getLoc(), type, ValueRange{});
+      auto load = rewriter.create<hivm::LoadOp>(producer->getLoc(),
+                                                TypeRange{type}, value, buffer);
+      load->setAttr("flagtree.cube_to_vector", rewriter.getUnitAttr());
+      return transferred[value] = load->getResult(0);
+    }
+    if (producer && canForwardCubeResult(producer)) {
+      // Clone metadata views for this Vector branch. A shared view may also
+      // feed a Cube accumulator or a direct GM output, which must keep its
+      // original value. Insert at the old view so dynamic offsets dominate.
+      IRMapping mapping;
+      bool changed = false;
+      for (Value operand : producer->getOperands()) {
+        auto replacement = rewrite(operand, consumer);
+        if (failed(replacement))
+          return failure();
+        if (*replacement != operand) {
+          mapping.map(operand, *replacement);
+          changed = true;
+        }
+      }
+      if (!changed)
+        return value;
+      rewriter.setInsertionPoint(producer);
+      auto *clone = rewriter.clone(*producer, mapping);
+      return transferred[value] =
+                 clone->getResult(cast<OpResult>(value).getResultNumber());
+    }
+    llvm::DenseSet<Value> visited;
+    if (hasForwardedCubeResult(value, visited)) {
+      consumer->emitError(
+          "Cube-to-Vector custom/bitcast operand forwarded through "
+          "control flow requires an explicit transfer before the yield");
+      return failure();
+    }
+    return value;
+  };
+
+  SmallVector<Operation *> consumers;
+  module.walk([&](Operation *op) {
+    if (!isAscend910B(op))
+      return;
+    if (isa<arith::BitcastOp, hivm::BitcastOp>(op))
+      consumers.push_back(op);
+    else if (auto custom = dyn_cast<hivm::CustomOp>(op))
+      if (custom.getCoreType() == hivm::TCoreType::VECTOR)
+        consumers.push_back(op);
+  });
+  for (auto *consumer : consumers) {
+    for (OpOperand &operand : consumer->getOpOperands()) {
+      if (!isa<RankedTensorType>(operand.get().getType()))
+        continue;
+      auto replacement = rewrite(operand.get(), consumer);
+      if (failed(replacement))
+        return failure();
+      operand.set(*replacement);
+    }
+  }
+  return success();
 }
 
 LogicalResult
