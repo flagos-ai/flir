@@ -686,6 +686,9 @@ LogicalResult MaskState::parseSplat(triton::SplatOp splatOp,
             [&](triton::LoadOp loadOp) { return loadOp.getMask() == dst; })
         .Case<triton::StoreOp>(
             [&](triton::StoreOp storeOp) { return storeOp.getMask() == dst; })
+        .Case<triton::AtomicRMWOp>([&](triton::AtomicRMWOp atomicOp) {
+          return atomicOp.getMask() == dst;
+        })
         .Default([&](Operation *op) { return false; });
   };
 
