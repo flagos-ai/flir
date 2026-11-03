@@ -14,6 +14,8 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -53,6 +55,34 @@ LogicalResult GmOffsetOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult CopyOp::verify() {
+  if (getShape().empty())
+    return success(); // Legacy full-region copy.
+  for (Value operand : {getSrc(), getDst()}) {
+    Type type = operand.getType();
+    if (auto ptr = dyn_cast<mlir::triton::PointerType>(type))
+      type = ptr.getPointeeType();
+    ArrayRef<int64_t> capacity;
+    if (auto buf = dyn_cast<BufType>(type))
+      capacity = buf.getShape();
+    else if (auto tensor = dyn_cast<mlir::triton::tile::TensorType>(type))
+      capacity = tensor.getShape();
+    else if (auto shaped = dyn_cast<ShapedType>(type); shaped && shaped.hasRank())
+      capacity = shaped.getShape();
+    else
+      return emitOpError("explicit copy extent requires ranked operands");
+    if (capacity.size() != getShape().size())
+      return emitOpError("copy extent rank must match both operands");
+    for (auto [extent, bound] : llvm::zip(getShape(), capacity)) {
+      APInt constant;
+      if (!matchPattern(extent, m_ConstantInt(&constant)))
+        continue;
+      int64_t size = constant.getSExtValue();
+      if (size < 0)
+        return emitOpError("copy extents must be non-negative");
+      if (!ShapedType::isDynamic(bound) && size > bound)
+        return emitOpError("copy extent exceeds operand capacity");
+    }
+  }
   return success();
 }
 
