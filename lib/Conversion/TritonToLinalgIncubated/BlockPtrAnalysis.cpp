@@ -435,6 +435,8 @@ void BlockDataParser::parse(
         parseTensorPtr(advanceOp, data, loc, rewriter, known);
       } else if (auto intToPtrOp = dyn_cast<triton::IntToPtrOp>(op)) {
         data.setSource(remappedPtr);
+      } else if (isa<arith::SelectOp>(op)) {
+        data.setSource(remappedPtr);
       } else if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
         data.setSource(remappedPtr);
       } else {

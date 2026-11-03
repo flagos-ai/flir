@@ -2747,6 +2747,114 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
   return success();
 }
 
+// A select whose result is a scalar pointer has no single structured memref
+// base. It is lowered through a complete integer address instead: materialize
+// both candidate addresses, select on i64, then rebuild the scalar pointer
+// carrier with hivm.pointer_cast.
+static bool isScalarPointerSelect(arith::SelectOp op) {
+  auto pointerType = dyn_cast<triton::PointerType>(op.getType());
+  return pointerType && !isa<ShapedType>(pointerType.getPointeeType());
+}
+
+// Converts a memref descriptor into the complete byte address represented by
+// that descriptor. extract_aligned_pointer_as_index yields the aligned buffer
+// pointer; the descriptor's element offset must therefore be converted to
+// bytes and added explicitly.
+static FailureOr<Value>
+materializePointerAddress(Value value, Location loc,
+                          ConversionPatternRewriter &rewriter) {
+  auto memrefType = dyn_cast<MemRefType>(value.getType());
+  if (!memrefType)
+    return failure();
+  Type elementType = memrefType.getElementType();
+  if (!elementType.isIntOrFloat())
+    return failure();
+
+  // A reinterpret_cast exposes its dynamic element offset as a plain operand,
+  // and its source carries the un-offset base buffer. Prefer both over
+  // extract_strided_metadata, which downstream bishengir passes reject when
+  // its root is a function-argument-backed cast.
+  if (auto castOp = value.getDefiningOp<memref::ReinterpretCastOp>()) {
+    if (castOp.getMixedOffsets().size() != 1)
+      return failure();
+    Value address = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
+        loc, castOp.getSource());
+    OpFoldResult elementOffset = castOp.getMixedOffsets().front();
+    int64_t elementBytes = (elementType.getIntOrFloatBitWidth() + 7) / 8;
+    Value offsetVal =
+        getValueOrCreateConstantIndexOp(rewriter, loc, elementOffset);
+    if (elementBytes != 1) {
+      Value scale = rewriter.create<arith::ConstantIndexOp>(loc, elementBytes);
+      offsetVal = rewriter.create<arith::MulIOp>(loc, offsetVal, scale);
+    }
+    address = rewriter.create<arith::AddIOp>(loc, address, offsetVal);
+    return rewriter
+        .create<arith::IndexCastOp>(loc, rewriter.getI64Type(), address)
+        .getResult();
+  }
+
+  Value address =
+      rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(loc, value);
+  int64_t staticOffset = memrefType.getStridesAndOffset().second;
+  if (staticOffset != 0) {
+    Value elementOffset;
+    if (ShapedType::isDynamic(staticOffset)) {
+      elementOffset =
+          rewriter.create<memref::ExtractStridedMetadataOp>(loc, value)
+              .getOffset();
+    } else {
+      elementOffset =
+          rewriter.create<arith::ConstantIndexOp>(loc, staticOffset);
+    }
+
+    int64_t elementBytes = (elementType.getIntOrFloatBitWidth() + 7) / 8;
+    if (elementBytes != 1) {
+      Value scale = rewriter.create<arith::ConstantIndexOp>(loc, elementBytes);
+      elementOffset = rewriter.create<arith::MulIOp>(loc, elementOffset, scale);
+    }
+    address = rewriter.create<arith::AddIOp>(loc, address, elementOffset);
+  }
+  return rewriter
+      .create<arith::IndexCastOp>(loc, rewriter.getI64Type(), address)
+      .getResult();
+}
+
+LogicalResult PointerSelectConverter::matchAndRewrite(
+    arith::SelectOp op, OpAdaptor adaptor,
+    ConversionPatternRewriter &rewriter) const {
+  if (!isScalarPointerSelect(op))
+    return failure();
+
+  // Mirror the TritonTypeConverter rule for scalar pointers
+  // (tt.ptr<T> -> memref<?xT>, with ptr<i1> normalized to memref<?xi8>).
+  auto pointerType = cast<triton::PointerType>(op.getType());
+  Type pointeeType = pointerType.getPointeeType();
+  if (auto intType = dyn_cast<IntegerType>(pointeeType);
+      intType && intType.getWidth() == 1) {
+    pointeeType = IntegerType::get(op.getContext(), 8);
+  }
+  auto carrierType = MemRefType::get({ShapedType::kDynamic}, pointeeType);
+
+  FailureOr<Value> trueAddress =
+      materializePointerAddress(adaptor.getTrueValue(), op.getLoc(), rewriter);
+  FailureOr<Value> falseAddress =
+      materializePointerAddress(adaptor.getFalseValue(), op.getLoc(), rewriter);
+  if (failed(trueAddress) || failed(falseAddress))
+    return rewriter.notifyMatchFailure(
+        op, "selected pointer values have no complete integer address");
+
+  auto selectedAddress = rewriter.create<arith::SelectOp>(
+      op.getLoc(), rewriter.getI64Type(), adaptor.getCondition(), *trueAddress,
+      *falseAddress);
+  selectedAddress->setAttrs(op->getAttrs());
+
+  auto pointerCast = rewriter.create<hivm::PointerCastOp>(
+      op.getLoc(), carrierType, ValueRange{selectedAddress.getResult()});
+  rewriter.replaceOp(op, pointerCast.getResult());
+  return success();
+}
+// ==== end port from triton-ascend ====
+
 LogicalResult
 PtrToIntConverter::matchAndRewrite(triton::PtrToIntOp op, OpAdaptor adaptor,
                                    ConversionPatternRewriter &rewriter) const {

@@ -522,6 +522,13 @@ void TritonToLinalgIncubatedPass::addDynamicLegal(
     });
   });
 
+  // A scalar-pointer select must be rebuilt through
+  // its integer address by PointerSelectConverter; value selects stay legal.
+  target.addDynamicallyLegalOp<arith::SelectOp>([](arith::SelectOp op) {
+    auto pointerType = dyn_cast<triton::PointerType>(op.getType());
+    return !(pointerType && !isa<ShapedType>(pointerType.getPointeeType()));
+  });
+
   target.addDynamicallyLegalDialect<arith::ArithDialect, math::MathDialect>(
       [this](Operation *op) {
         if (op->hasAttr("MetaUse")) {
@@ -669,6 +676,7 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
   patterns.add<TTOpConverters::MatmulConverter>(patterns.getContext());
   patterns.add<TTOpConverters::DotScaledConverter>(patterns.getContext());
   patterns.add<TTOpConverters::PtrToIntConverter>(patterns.getContext());
+  patterns.add<TTOpConverters::PointerSelectConverter>(patterns.getContext());
 
   patterns.add<TTOpConverters::IndirectLoadConverter>(patterns.getContext());
   patterns.add<TTOpConverters::IndirectStoreConverter>(patterns.getContext());

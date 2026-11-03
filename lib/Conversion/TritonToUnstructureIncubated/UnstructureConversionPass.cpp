@@ -46,6 +46,11 @@ using namespace triton;
 
 bool forceSimtTemplateFlag = false;
 
+static bool isTensorOfPointers(Type type) {
+  auto tensorType = dyn_cast<RankedTensorType>(type);
+  return tensorType && isa<triton::PointerType>(tensorType.getElementType());
+}
+
 template <typename MemAccOpTy>
 bool UnstructuredMemAccessConverter<MemAccOpTy>::checkUnstructureAnnotated(
     MemAccOpTy op, PatternRewriter &rewriter) const {
@@ -311,6 +316,13 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
 
   auto srcPtr = ptrOffsetInfo.getPtr();
   auto ptrOffset = ptrOffsetInfo.getOffset();
+  // An opaque tensor-of-pointers base (e.g. the
+  // result of a per-lane pointer select) is consumed lane by lane below, so
+  // only reject bases that are neither a scalar pointer nor such a tensor.
+  if (!isa<triton::PointerType>(srcPtr.getType()) &&
+      !isTensorOfPointers(srcPtr.getType()))
+    return rewriter.notifyMatchFailure(
+        op, "expected a scalar pointer or a tensor of scalar pointers");
 
   // LoadLike is operation with result
   bool isLoadLike = !op->use_empty();
@@ -504,8 +516,21 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     os << extractedOffset << "\n";
   });
 
-  assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
-  if (!fullyUnstructured) {
+  // A tensor-of-pointers base is opaque: each lane
+  // may select a different allocation. Extract the base with the same scalar
+  // or slice coordinates as the offset, then form the access pointer lane by
+  // lane.
+  if (isTensorOfPointers(srcPtr.getType())) {
+    if (fullyUnstructured)
+      srcPtr = createExtractOp(loc, srcPtr, rewriter, offsets);
+    else
+      srcPtr = createExtractOp(loc, srcPtr, rewriter, offsets, sizes, strides);
+  }
+
+  assert((isa<triton::PointerType>(srcPtr.getType()) ||
+          isTensorOfPointers(srcPtr.getType())) &&
+         "src must be a scalar pointer or tensor of pointers");
+  if (!fullyUnstructured && isa<triton::PointerType>(srcPtr.getType())) {
     srcPtr = rewriter.create<triton::SplatOp>(
         loc, RankedTensorType::get(extractedShape, srcPtr.getType()), srcPtr);
   }
