@@ -37,7 +37,7 @@ Value createStridedView(OpBuilder &b, Location loc, Value baseView,
 Value createGatherScatterView(OpBuilder &b, Location loc, Value baseView,
                               ArrayRef<int64_t> tile,
                               ArrayRef<int64_t> sparseDims,
-                              PaddingValue paddingValue);
+                              PaddingValue paddingValue, bool boundsCheck);
 
 } // namespace tv
 } // namespace triton

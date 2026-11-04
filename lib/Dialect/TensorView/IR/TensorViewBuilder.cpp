@@ -129,9 +129,9 @@ Value createStridedView(OpBuilder &b, Location loc, Value baseView,
 Value createGatherScatterView(OpBuilder &b, Location loc, Value baseView,
                               ArrayRef<int64_t> tile,
                               ArrayRef<int64_t> sparseDims,
-                              PaddingValue paddingValue) {
-  auto encoding = tv::GatherScatterViewAttr::get(b.getContext(), tile,
-                                                 sparseDims, paddingValue);
+                              PaddingValue paddingValue, bool boundsCheck) {
+  auto encoding = tv::GatherScatterViewAttr::get(
+      b.getContext(), tile, sparseDims, paddingValue, boundsCheck);
   auto resultType = getEncodedViewType(baseView, encoding);
   return b.create<tv::MakeGatherScatterViewOp>(loc, resultType, baseView)
       .getResult();
