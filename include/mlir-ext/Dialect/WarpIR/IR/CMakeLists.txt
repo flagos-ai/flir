@@ -12,8 +12,8 @@ add_public_tablegen_target(WarpIRTableGen)
 
 # AttrDefs tablegen
 set(LLVM_TARGET_DEFINITIONS WarpIRAttrDefs.td)
-mlir_tablegen(WarpIROpsAttrDefs.h.inc -gen-attrdef-decls)
-mlir_tablegen(WarpIROpsAttrDefs.cpp.inc -gen-attrdef-defs)
+mlir_tablegen(WarpIROpsAttrDefs.h.inc -gen-attrdef-decls -attrdefs-dialect=warp)
+mlir_tablegen(WarpIROpsAttrDefs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=warp)
 mlir_tablegen(WarpIREnums.h.inc -gen-enum-decls)
 mlir_tablegen(WarpIREnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(WarpIRAttrDefsIncGen)

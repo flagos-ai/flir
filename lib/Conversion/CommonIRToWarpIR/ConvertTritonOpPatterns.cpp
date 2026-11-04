@@ -49,9 +49,6 @@ class MakeRangeOpConversionPattern : public OpConversionPattern<triton::MakeRang
 class LoadOpConversionPattern : public OpConversionPattern<triton::LoadOp> {
   using OpConversionPattern::OpConversionPattern;
   public:
-  int numWarps;
-  int threadsPerWarp;
-  int numCTAs;
  
   LoadOpConversionPattern(TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<triton::LoadOp>(typeConverter, context) {}
@@ -59,7 +56,6 @@ class LoadOpConversionPattern : public OpConversionPattern<triton::LoadOp> {
   LogicalResult
   matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    
     auto tensorTy = dyn_cast<RankedTensorType>(op.getResult().getType());
     auto resultTy = getTypeConverter()->convertType(op.getResult().getType());
     auto newOp = rewriter.create<warp::LoadOp>(
@@ -68,7 +64,6 @@ class LoadOpConversionPattern : public OpConversionPattern<triton::LoadOp> {
         op.getBoundaryCheckAttr(), op.getPaddingAttr(), op.getCacheAttr(),
         op.getEvictAttr(), op.getIsVolatileAttr(), op.getFlagtreeHintsAttr()
     );
-
     newOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     rewriter.replaceOp(op, newOp->getResults());
     return success();
@@ -80,6 +75,7 @@ void populateTritonPatterns(RewritePatternSet &patterns,
                             int numWarps, int threadsPerWarp, int numCTAs){
     MLIRContext *context = patterns.getContext();
     patterns.add<LoadOpConversionPattern, MakeRangeOpConversionPattern>(typeConverter,context);
+
 }
 } // namespace warp
 } // namespace triton

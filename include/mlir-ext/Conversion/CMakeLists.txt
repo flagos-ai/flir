@@ -1,1 +1,2 @@
 add_subdirectory(CommonIRToWarpIR)
+add_subdirectory(WarpIRToTritonGPUOrLLVM)
