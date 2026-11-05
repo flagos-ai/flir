@@ -34,6 +34,13 @@ LogicalResult LoadOp::verify() {
 LogicalResult StoreOp::verify() {
   return success();
 }
+LogicalResult ExpandDimsOp::verify() {
+  return success();
+}
+
+LogicalResult BroadcastOp::verify() {
+  return success();
+}
 
 LogicalResult RegToTensorOp::verify() {
   return success();
@@ -42,10 +49,12 @@ LogicalResult RegToTensorOp::verify() {
 LogicalResult DistributionAttr::verify(
     function_ref<InFlightDiagnostic()> emitError,
     int64_t warpSize,
+    ArrayRef<unsigned int> threadsPerWarp,
     ArrayRef<unsigned int> elementsPerThread,
     ArrayRef<unsigned int> order) {
   return success();
 }
+
 
 // LogicalResult MmaAttr::verify(
 //     llvm::function_ref<mlir::InFlightDiagnostic()> emitError,

@@ -28,12 +28,14 @@ WarpTypeConverter::WarpTypeConverter(MLIRContext *context,
       if (t.getEncoding() || t.getRank() == 0)
         return t;
       auto warpLayout = inferDistribution(this->context, t.getShape(), this->numWarps, this->threadsPerWarp);
-      auto _prod = this -> threadsPerWarp;
       auto elementsPerThread = warpLayout.getElementsPerThread();
-      SmallVector<int64_t> shapeOfSingleWarp(elementsPerThread.begin(),
-                           elementsPerThread.end());
+      auto threadsPerWarp = warpLayout.getThreadsPerWarp();
+      SmallVector<int64_t> shapeOfSingleWarp(elementsPerThread.size());
+      for (int i = 0; i < elementsPerThread.size(); ++i) {
+          shapeOfSingleWarp[i] = elementsPerThread[i] * threadsPerWarp[i];
+      }
 
-      auto newType = RankedTensorType::get(shapeOfSingleWarp, t.getElementType());
+      auto newType = RankedTensorType::get(shapeOfSingleWarp, t.getElementType(), warpLayout);
       return newType;
     });
 

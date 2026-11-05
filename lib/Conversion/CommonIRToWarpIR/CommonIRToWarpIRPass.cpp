@@ -31,12 +31,12 @@ namespace warp{
 
 inline void setLegalityForTarget(ConversionTarget &target, const WarpTypeConverter &tc) {
     target.addLegalDialect<
-        mlir::triton::warp::WarpIRDialect, mlir::triton::TritonDialect, arith::ArithDialect>();
+        mlir::triton::warp::WarpIRDialect>();
     target.addLegalOp<ModuleOp>();
     target.addIllegalOp<triton::LoadOp>();
-    target.addIllegalOp<triton::MakeRangeOp>();
+    target.addLegalOp<arith::ConstantOp>();
 
-    target.addDynamicallyLegalDialect<math::MathDialect>(
+    target.addDynamicallyLegalDialect<math::MathDialect, mlir::triton::TritonDialect, arith::ArithDialect>(
       [&tc](Operation *op) { return tc.isLegal(op); });
 
     target.addDynamicallyLegalOp<mlir::triton::FuncOp>(

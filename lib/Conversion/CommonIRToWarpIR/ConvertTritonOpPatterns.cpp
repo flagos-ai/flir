@@ -19,6 +19,65 @@ namespace warp {
 
 using namespace mlir::triton;
 
+class ExpandDimsOpConversionPattern
+    : public OpConversionPattern<triton::ExpandDimsOp> {
+
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(
+      triton::ExpandDimsOp op,
+      OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+
+    auto src = adaptor.getSrc();
+  
+    auto resultType =
+        getTypeConverter()->convertType(op.getType());
+
+    if (!resultType)
+      return failure();
+
+    auto newOp = rewriter.create<warp::ExpandDimsOp>(
+        op.getLoc(), resultType, src, op.getAxisAttr()
+    );
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+};
+
+
+
+class BroadcastOpConversionPattern
+    : public OpConversionPattern<triton::BroadcastOp> {
+
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(
+      triton::BroadcastOp op,
+      OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+
+    auto src = adaptor.getSrc();
+  
+    auto resultType =
+        getTypeConverter()->convertType(op.getType());
+
+    if (!resultType)
+      return failure();
+
+    auto newOp = rewriter.create<warp::BroadcastOp>(
+        op.getLoc(), resultType, src
+    );
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+};
+
+
 class MakeRangeOpConversionPattern : public OpConversionPattern<triton::MakeRangeOp> {
     using OpConversionPattern::OpConversionPattern;
     public:
@@ -74,7 +133,8 @@ void populateTritonPatterns(RewritePatternSet &patterns,
                             TypeConverter &typeConverter, 
                             int numWarps, int threadsPerWarp, int numCTAs){
     MLIRContext *context = patterns.getContext();
-    patterns.add<LoadOpConversionPattern, MakeRangeOpConversionPattern>(typeConverter,context);
+    patterns.add<LoadOpConversionPattern, MakeRangeOpConversionPattern, 
+                 ExpandDimsOpConversionPattern, BroadcastOpConversionPattern>(typeConverter,context);
 
 }
 } // namespace warp

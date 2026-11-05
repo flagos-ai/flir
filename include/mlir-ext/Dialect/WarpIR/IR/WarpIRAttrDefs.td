@@ -88,6 +88,7 @@ def Warp_DistributionAttr : WarpIR_Attr<"Distribution", "distributed"> {
 
   let parameters = (ins
     DefaultValuedParameter<"int64_t", "32">:$warpSize,
+    ArrayRefParameter<"unsigned int">:$threadsPerWarp,
     ArrayRefParameter<"unsigned int">:$elementsPerThread,
     ArrayRefParameter<"unsigned int">:$order
   );
@@ -95,6 +96,7 @@ def Warp_DistributionAttr : WarpIR_Attr<"Distribution", "distributed"> {
   let assemblyFormat = [{
     `<` `{`
       `warp_size` `=` $warpSize `,`
+      `threadsPerWarp` `=` $threadsPerWarp `,`
       `elements_per_thread` `=` $elementsPerThread `,`
       `order` `=` $order
     `}` `>`

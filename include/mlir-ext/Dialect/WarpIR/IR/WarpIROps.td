@@ -79,6 +79,54 @@ def WarpIR_LoadOp :
 
 }
 
+def Warp_ExpandDimsOp : WarpIR_Op<"expand_dims", [
+    Pure,
+    SameOperandsAndResultElementType
+]> {
+  let summary = "Insert a size-1 dimension at the given axis";
+  let description = [{
+    Expands the shape of `src` by inserting a dimension of size 1 at `axis`.
+    The result rank is `rank(src) + 1`, and `result.shape[axis] == 1`.
+
+    Example:
+    ```mlir
+    %1 = warp.expand_dims %0 {axis = 1 : i32} : tensor<128xf32> -> tensor<128x1xf32>
+    ```
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$src,
+    I32Attr:$axis
+  );
+
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+
+  let hasVerifier = 1;
+}
+
+def TT_BroadcastOp : WarpIR_Op<"broadcast", [Pure,
+                                         SameOperandsAndResultElementType,
+                                         SameOperandsAndResultEncoding]> {
+    let summary = "broadcast a tensor";
+
+    let description = [{
+      For a given tensor, broadcast changes one or more dimensions with size 1
+      to a new size, e.g. tensor<1x32x1xf32> -> tensor<2x32x4xf32>.  You cannot
+      change the size of a non-1 dimension.
+    }];
+
+    let arguments = (ins AnyRankedTensor:$src);
+
+    let results = (outs AnyRankedTensor:$result);
+
+    let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+
+    let hasVerifier = 1;
+}
+
+
 
 //===----------------------------------------------------------------------===//
 // Store

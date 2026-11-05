@@ -60,7 +60,8 @@ void populateGenericTritonPatterns(RewritePatternSet &patterns, TypeConverter &t
       GenericOpPattern<triton::DescriptorReduceOp>,
       // this assumes the right layout will be set later for dot scaled.
       GenericOpPattern<triton::DotScaledOp>,
-      GenericOpPattern<triton::CallOp>
+      GenericOpPattern<triton::CallOp>,
+      GenericOpPattern<triton::DotOp>
       // clang-format on
       >(typeConverter, context);
 
