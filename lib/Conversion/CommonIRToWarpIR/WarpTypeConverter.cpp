@@ -1,0 +1,42 @@
+#include "mlir-ext/Conversion/CommonIRToWarpIR/WarpTypeConverter.h"
+#include <algorithm>
+#include <numeric>
+#include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/Support/LLVM.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "mlir-ext/Conversion/CommonIRToWarpIR/Passes.h"
+#include "mlir-ext/Dialect/WarpIR/IR/WarpIRDialect.h"
+#include "mlir-ext/Dialect/CommonIR/IR/CommonIRDialect.h"
+
+
+using namespace mlir;
+using namespace mlir::triton::warp;
+using namespace mlir::triton::tile;
+
+//
+// TypeConverter
+//
+WarpTypeConverter::WarpTypeConverter(MLIRContext *context,
+                                     int numWarps, int threadsPerWarp,
+                                     int numCTAs)
+    : context(context), numWarps(numWarps), threadsPerWarp(threadsPerWarp),
+      numCTAs(numCTAs) {
+  addConversion([](Type type) { return type; });
+
+  addConversion([this](RankedTensorType t) -> Type {           
+      if (t.getEncoding() || t.getRank() == 0)
+        return t;
+      auto warpLayout = inferDistribution(this->context, t.getShape(), this->numWarps, this->threadsPerWarp);
+      auto elementsPerThread = warpLayout.getElementsPerThread();
+      auto threadsPerWarp = warpLayout.getThreadsPerWarp();
+      SmallVector<int64_t> shapeOfSingleWarp(elementsPerThread.size());
+      for (int i = 0; i < elementsPerThread.size(); ++i) {
+          shapeOfSingleWarp[i] = elementsPerThread[i] * threadsPerWarp[i];
+      }
+
+      auto newType = RankedTensorType::get(shapeOfSingleWarp, t.getElementType(), warpLayout);
+      return newType;
+    });
+
+}
