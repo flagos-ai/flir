@@ -2557,6 +2557,36 @@ LogicalResult DeviceAssertConverter::matchAndRewrite(
   return success();
 }
 
+// A segmented load can be restructured into an ND allocation and collapsed
+// back to its logical matrix shape. CANN must not convert that allocation to
+// per-slice NZ before the collapse: collapsing NZ axes changes matrix order.
+// Materialize the logical ND matrix through the existing Vector/GM junction.
+static bool collapsesLoadedNDAxes(Operation *op) {
+  if (!isa<tensor::ReshapeOp, tensor::CollapseShapeOp>(op))
+    return false;
+  auto source = dyn_cast<RankedTensorType>(op->getOperand(0).getType());
+  auto result = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+  if (!source || !result || !source.hasStaticShape() || source.getRank() <= 2 ||
+      source.getRank() <= result.getRank())
+    return false;
+  auto nonUnitAxes = [](RankedTensorType type) {
+    return llvm::count_if(type.getShape(),
+                          [](int64_t dim) { return dim != 1; });
+  };
+  if (nonUnitAxes(source) <= nonUnitAxes(result))
+    return false;
+  Value value = op->getOperand(0);
+  while (auto cast = value.getDefiningOp<tensor::CastOp>())
+    value = cast.getSource();
+  auto tensor = value.getDefiningOp<bufferization::ToTensorOp>();
+  if (!tensor)
+    return false;
+  Value buffer = tensor->getOperand(0);
+  auto type = dyn_cast<MemRefType>(buffer.getType());
+  return type && !type.getMemorySpace() &&
+         buffer.getDefiningOp<memref::AllocOp>();
+}
+
 // CANN's Vector/Cube junction analysis does not trace tensor bitcast views or
 // values produced by explicitly Vector-only custom operations.
 // Keep vector side consumers in UB, and give only the Cube consumer a separate
@@ -2577,6 +2607,10 @@ static Value legalizeVectorDotOperand(Value value, Operation *dot,
     auto *producer = worklist.pop_back_val().getDefiningOp();
     if (!producer || !visited.insert(producer).second)
       continue;
+    if (collapsesLoadedNDAxes(producer)) {
+      needsTransfer = true;
+      break;
+    }
     // Indirect producers may not have been converted yet: an already-legal
     // arith op can still use tt.bitcast while the dot pattern is visited.
     if (isa<arith::BitcastOp, triton::BitcastOp>(producer)) {
