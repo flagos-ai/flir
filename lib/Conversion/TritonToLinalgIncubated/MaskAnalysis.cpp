@@ -403,7 +403,21 @@ LogicalResult MaskState::parseAdd(arith::AddIOp addOp, const Location &loc,
   if (failed(rhsState.parse(addOp.getRhs(), loc, builder))) {
     return failure();
   }
-  return this->addStates(lhsState, rhsState, loc, builder);
+  auto result = this->addStates(lhsState, rhsState, loc, builder);
+  auto type = dyn_cast<RankedTensorType>(addOp.getType());
+  auto integer =
+      type ? dyn_cast<IntegerType>(type.getElementType()) : IntegerType();
+  if (succeeded(result) && start && end && integer && integer.getWidth() < 64) {
+    auto lower = getConstantIntValue(start);
+    auto upper = getConstantIntValue(end);
+    int64_t limit = int64_t{1} << (integer.getWidth() - 1);
+    // Index arithmetic is wider than the original element type. A wrapped
+    // integer range is not a contiguous interval; retain the original mask.
+    if (lower && upper &&
+        (*lower < -limit || *lower >= limit || *upper > limit))
+      return failure();
+  }
+  return result;
 }
 
 LogicalResult MaskState::parseDiv(arith::DivSIOp divOp, const Location &loc,
@@ -584,6 +598,17 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location &loc,
     auto newOffset =
         subOpFoldResult(rhsState.scalar, lhsState.start, loc, builder);
     auto newDim = builder.getIndexAttr(1);
+
+    // Equality outside the range selects no elements. Keeping a unit slice
+    // there would produce a negative offset or extend past the source.
+    auto constantOffset = getConstantIntValue(newOffset);
+    auto constantExtent = getConstantIntValue(lhsState.dims[cmpDim]);
+    if (constantOffset &&
+        (*constantOffset < 0 ||
+         (constantExtent && *constantOffset >= *constantExtent))) {
+      newOffset = builder.getIndexAttr(0);
+      newDim = builder.getIndexAttr(0);
+    }
 
     this->offsets[cmpDim] = newOffset;
     this->dims[cmpDim] = newDim;
