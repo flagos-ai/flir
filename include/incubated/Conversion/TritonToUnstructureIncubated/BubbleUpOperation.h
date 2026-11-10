@@ -72,6 +72,8 @@ private:
                          PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, arith::CmpIOp parentOp, Location loc,
                          PatternRewriter &rewriter) const;
+  void bubbleUpOperation(ExtractOpTy op, arith::SelectOp parentOp, Location loc,
+                         PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, arith::TruncFOp parentOp, Location loc,
                          PatternRewriter &rewriter) const;
   void bubbleUpOperation(ExtractOpTy op, arith::ExtFOp parentOp, Location loc,

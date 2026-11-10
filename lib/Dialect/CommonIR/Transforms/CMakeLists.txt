@@ -1,6 +1,7 @@
 add_triton_library(CommonIRTransforms
   InferLayout.cpp
   BufferLayoutPropagation.cpp
+  LaneVectorize.cpp
   LayoutHints.cpp
   TensorLayoutPropagation.cpp
 
@@ -13,6 +14,11 @@ add_triton_library(CommonIRTransforms
   MLIRArithDialect
   MLIRSCFDialect
   CommonIRIR
+  MLIRTransformUtils
+  MLIRTransforms
+  MLIRSCFToControlFlow
+  MLIRTensorDialect
+  TritonIR
 )
 
 target_include_directories(CommonIRTransforms PUBLIC
