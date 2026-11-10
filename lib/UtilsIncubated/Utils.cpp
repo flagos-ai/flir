@@ -94,7 +94,8 @@ getLastStrideOfReinterpretCastOp(memref::ReinterpretCastOp op) {
 
   if (op.getStaticStrides().back() > 0) {
     return op.getStaticStrides().back();
-  } else if (isa<BlockArgument>(op.getStrides().back())) {
+  } else if (!op.getStrides().empty() &&
+             isa<BlockArgument>(op.getStrides().back())) {
     auto u = op.getStrides().back();
     while (auto blkArg = dyn_cast<BlockArgument>(u)) {
       if (auto forOp = dyn_cast<scf::ForOp>(blkArg.getOwner()->getParentOp())) {
