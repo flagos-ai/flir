@@ -4,7 +4,6 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "llvm/ADT/MapVector.h"
-#include <memory>
 
 namespace mlir::triton::tile {
 
@@ -44,16 +43,10 @@ struct TensorLayoutRequirements {
 SmallVector<Value>
 collectTensorLayoutComponent(Value seed, const TensorLayoutAdapter &adapter);
 
-struct TensorLayoutPlan {
-  virtual ~TensorLayoutPlan() = default;
-  virtual void apply() = 0;
-};
-
-// Analyze without modifying IR. The adapter and source IR must remain alive
-// and unchanged until apply(). Unknown consumers keep their original layouts.
-std::unique_ptr<TensorLayoutPlan>
-planTensorLayouts(const TensorLayoutRequirements &requirements,
-                  const TensorLayoutAdapter &adapter);
+// Analyze requirements before applying any IR changes. Unknown consumers keep
+// their original layouts through boundary conversions.
+void applyTensorLayoutRequirements(const TensorLayoutRequirements &requirements,
+                                   const TensorLayoutAdapter &adapter);
 
 } // namespace mlir::triton::tile
 

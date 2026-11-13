@@ -1,6 +1,5 @@
 #include "mlir-ext/Dialect/CommonIR/IR/LayoutHintAttrs.h"
 
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 namespace mlir::triton::tile {
@@ -47,14 +46,6 @@ LogicalResult inferExplicitMemoryEncoding(Operation *op, Attribute &encoding) {
   }
 
   return success();
-}
-
-void clearLayoutHints(ModuleOp module) {
-  module.walk([](Operation *op) {
-    op->removeAttr(getExplicitMemoryEncodingAttrName());
-    for (unsigned i = 0; i < op->getNumResults(); ++i)
-      op->removeAttr(getExplicitEncodingAttrName(i));
-  });
 }
 
 } // namespace mlir::triton::tile

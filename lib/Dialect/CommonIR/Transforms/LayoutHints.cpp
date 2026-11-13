@@ -148,6 +148,9 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
       }
       if (isa<tile::SetLayoutOp>(op))
         continue;
+      // Gather's result follows its indices, not its data source.
+      if (isa<triton::GatherOp>(op) && use.getOperandNumber() != 1)
+        continue;
 
       if (isa<ExtractTileOp, InsertTileOp>(op)) {
         // Insert ties base to result; size-changing boundaries need target checks.
@@ -182,6 +185,13 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
                                      {info.encoding, true}, func, valueToEncoding,
                                      worklist, callbacks)))
           return failure();
+      } else if (auto gather = dyn_cast<triton::GatherOp>(definingOp)) {
+        if (Attribute encoding =
+                callbacks.inferSrcEncoding(gather, info.encoding))
+          if (failed(updateLayoutHint({gather.getIndices()}, {encoding, true},
+                                      func, valueToEncoding, worklist,
+                                      callbacks)))
+            return failure();
       } else if (auto extract = dyn_cast<ExtractTileOp>(definingOp)) {
         if (canPropagateTile(extract, info.encoding) &&
             failed(updateLayoutHint({extract.getSource()}, {info.encoding, true},

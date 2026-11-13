@@ -5,10 +5,6 @@
 #include "llvm/ADT/Twine.h"
 #include <string>
 
-namespace mlir {
-class ModuleOp;
-}
-
 namespace mlir::triton::tile {
 
 static constexpr const char *kExplicitEncodingAttrPrefix =
@@ -25,7 +21,8 @@ inline const char *getExplicitMemoryEncodingAttrName() {
   return kExplicitMemoryEncodingAttrName;
 }
 
-inline Attribute getExplicitResultEncoding(Operation *op, unsigned resultNumber) {
+inline Attribute getExplicitResultEncoding(Operation *op,
+                                           unsigned resultNumber) {
   return op->getAttr(getExplicitEncodingAttrName(resultNumber));
 }
 
@@ -57,7 +54,7 @@ inline Attribute getExplicitValueEncoding(Value value) {
 // Use convert_layout to carry hints on block arguments and region results,
 // where indexed attributes are absent or unsafe across control-flow rewrites.
 inline LogicalResult trySetExplicitValueEncoding(Value value,
-                                                        Attribute encoding) {
+                                                 Attribute encoding) {
   auto result = dyn_cast<OpResult>(value);
   if (!result || result.getOwner()->getNumRegions())
     return failure();
@@ -71,9 +68,6 @@ inline LogicalResult trySetExplicitValueEncoding(Value value,
 // Check agreement between result/operand constraints on a memory operation.
 // The caller decides which operations require a common memory encoding.
 LogicalResult inferExplicitMemoryEncoding(Operation *op, Attribute &encoding);
-
-// Drop planning markers after layout-sensitive optimization, retaining types.
-void clearLayoutHints(ModuleOp module);
 
 } // namespace mlir::triton::tile
 

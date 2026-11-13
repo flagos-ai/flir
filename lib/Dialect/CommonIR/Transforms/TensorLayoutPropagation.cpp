@@ -2,6 +2,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
+#include <memory>
 #include <tuple>
 
 namespace mlir::triton::tile {
@@ -22,7 +23,7 @@ struct Recipe {
   Value materialized;
 };
 
-class PlannedTensorLayouts final : public TensorLayoutPlan {
+class PlannedTensorLayouts {
 public:
   PlannedTensorLayouts(const TensorLayoutRequirements &requirements,
                        const TensorLayoutAdapter &adapter)
@@ -34,7 +35,7 @@ public:
     }
   }
 
-  void apply() override {
+  void apply() {
     // Retype producers and loop carriers together. Capture existing uses before
     // creating any boundary conversions; planned uses will bypass them below.
     struct OldUses {
@@ -206,10 +207,9 @@ collectTensorLayoutComponent(Value seed, const TensorLayoutAdapter &adapter) {
   return values.takeVector();
 }
 
-std::unique_ptr<TensorLayoutPlan>
-planTensorLayouts(const TensorLayoutRequirements &requirements,
-                  const TensorLayoutAdapter &adapter) {
-  return std::make_unique<PlannedTensorLayouts>(requirements, adapter);
+void applyTensorLayoutRequirements(const TensorLayoutRequirements &requirements,
+                                   const TensorLayoutAdapter &adapter) {
+  PlannedTensorLayouts(requirements, adapter).apply();
 }
 
 } // namespace mlir::triton::tile
