@@ -5,6 +5,10 @@
 #include "llvm/ADT/Twine.h"
 #include <string>
 
+namespace mlir {
+class ModuleOp;
+}
+
 namespace mlir::triton::tile {
 
 static constexpr const char *kExplicitEncodingAttrPrefix =
@@ -68,6 +72,9 @@ inline LogicalResult trySetExplicitValueEncoding(Value value,
 // Check agreement between result/operand constraints on a memory operation.
 // The caller decides which operations require a common memory encoding.
 LogicalResult inferExplicitMemoryEncoding(Operation *op, Attribute &encoding);
+
+// Drop planning markers after layout-sensitive optimization.
+void clearLayoutHints(ModuleOp module);
 
 } // namespace mlir::triton::tile
 

@@ -1,8 +1,8 @@
 add_triton_library(CommonIRTransforms
   InferLayout.cpp
+  ClearLayoutHints.cpp
   LaneVectorize.cpp
   LayoutHints.cpp
-  TensorLayoutPropagation.cpp
 
   DEPENDS
   CommonIRTransformsPassIncGen

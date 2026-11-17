@@ -68,4 +68,13 @@ def TritonLaneVectorize : Pass<"triton-lane-vectorize", "mlir::ModuleOp"> {
                            "mlir::triton::TritonDialect"];
 }
 
+def CommonIRClearLayoutHints
+    : Pass<"commonir-clear-layout-hints", "mlir::ModuleOp"> {
+  let summary = "Remove temporary CommonIR layout hints";
+  let description = [{
+    Removes explicit result and memory layout markers after layout-sensitive
+    transformations and before LLVM lowering.
+  }];
+}
+
 #endif // TILE_IR_TRANSFORMS_PASSES
