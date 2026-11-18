@@ -30,4 +30,26 @@ def MarkTensorKind : Pass<"mark-tensor-kind", "mlir::ModuleOp"> {
     let constructor = "triton::createMarkTensorKindPass()";
 }
 
+def ReduceSumStrength : Pass<"reduce-sum-strength", "mlir::ModuleOp"> {
+    let summary = "Reduce sum strength for profitable tl.sum-style add reductions";
+    let description = [{
+        This pass rewrites profitable add reductions by pre-adding two equal halves
+        of the reduced dimension and reducing the half-sized tensor. It is owned by
+        the FLIR ttir-to-ttadapter pipeline for backends where a full-width reduction
+        is more expensive than an elementwise add plus a smaller reduction.
+    }];
+    let constructor = "triton::Incubated::createReduceSumStrengthPass()";
+
+    let dependentDialects = ["mlir::arith::ArithDialect",
+                             "mlir::tensor::TensorDialect",
+                             "mlir::triton::TritonDialect"];
+
+    let options = [
+        Option<"enable", "enable", "bool", /*default*/"true",
+               "Enable the rewrite">,
+        Option<"splitFactor", "split-factor", "int32_t", /*default*/"2",
+               "Reduction-axis split factor; currently only 2 is supported">
+    ];
+}
+
 #endif // TRITON_TO_LINALG_CONVERSION_PASSES
