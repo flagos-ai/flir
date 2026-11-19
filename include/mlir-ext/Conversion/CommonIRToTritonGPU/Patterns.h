@@ -15,12 +15,6 @@ void populateSetLayoutToTritonGPUPatterns(TypeConverter &typeConverter,
                                         RewritePatternSet &patterns,
                                         ConversionTarget &target);
 
-// Adapt tensor tile types while retaining the logical extract/insert ops for
-// backend lowering. They are legal once their operand/result types are legal.
-void populateTensorTileTypePatterns(TypeConverter &typeConverter,
-                                   RewritePatternSet &patterns,
-                                   ConversionTarget &target);
-
 } // namespace triton::tile
 } // namespace mlir
 

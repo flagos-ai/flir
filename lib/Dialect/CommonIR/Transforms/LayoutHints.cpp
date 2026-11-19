@@ -97,10 +97,6 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
 
   llvm::MapVector<Value, LayoutHintInfo> valueToEncoding;
   llvm::PriorityWorklist<Value> worklist;
-  auto canPropagateTile = [&](Operation *op, Attribute encoding) {
-    return callbacks.canPropagateThroughTensorTile &&
-           callbacks.canPropagateThroughTensorTile(op, encoding);
-  };
   for (auto &[value, info] : seedEncodings) {
     if (failed(updateLayoutHint({value}, info, func, valueToEncoding, worklist,
                                 callbacks)))
@@ -152,17 +148,7 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
       if (isa<triton::GatherOp>(op) && use.getOperandNumber() != 1)
         continue;
 
-      if (isa<ExtractTileOp, InsertTileOp>(op)) {
-        // Insert ties base to result; size-changing boundaries need target checks.
-        bool tiedBase = isa<InsertTileOp>(op) && use.getOperandNumber() == 0;
-        if ((tiedBase || canPropagateTile(op, info.encoding)) &&
-            failed(updateLayoutHint({op->getResult(0)}, info, func,
-                                    valueToEncoding, worklist, callbacks)))
-          return failure();
-        continue;
-      }
-
-      Attribute dstEncoding = callbacks.inferDstEncoding(op, info.encoding);
+      Attribute dstEncoding = callbacks.inferDstEncoding(use, info.encoding);
       if (!dstEncoding)
         continue;
       LayoutHintInfo dstInfo{dstEncoding};
@@ -186,34 +172,21 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
                                      worklist, callbacks)))
           return failure();
       } else if (auto gather = dyn_cast<triton::GatherOp>(definingOp)) {
-        if (Attribute encoding =
-                callbacks.inferSrcEncoding(gather, info.encoding))
+        if (Attribute encoding = callbacks.inferSrcEncoding(
+                gather.getIndicesMutable(), info.encoding))
           if (failed(updateLayoutHint({gather.getIndices()}, {encoding, true},
                                       func, valueToEncoding, worklist,
                                       callbacks)))
             return failure();
-      } else if (auto extract = dyn_cast<ExtractTileOp>(definingOp)) {
-        if (canPropagateTile(extract, info.encoding) &&
-            failed(updateLayoutHint({extract.getSource()}, {info.encoding, true},
-                                    func, valueToEncoding, worklist, callbacks)))
-          return failure();
-      } else if (auto insert = dyn_cast<InsertTileOp>(definingOp)) {
-        if (failed(updateLayoutHint({insert.getBase()}, info, func,
-                                    valueToEncoding, worklist, callbacks)))
-          return failure();
-        if (canPropagateTile(insert, info.encoding) &&
-            failed(updateLayoutHint({insert.getUpdate()}, {info.encoding, true},
-                                    func, valueToEncoding, worklist, callbacks)))
-          return failure();
       } else if (!isa<tile::SetLayoutOp>(definingOp)) {
-        Attribute srcEncoding =
-            callbacks.inferSrcEncoding(definingOp, info.encoding);
-        if (srcEncoding) {
-          LayoutHintInfo srcInfo{srcEncoding};
-          if (failed(updateLayoutHint(
-                  llvm::to_vector_of<Value>(definingOp->getOperands()), srcInfo,
-                  func, valueToEncoding, worklist, callbacks)))
-            return failure();
+        for (OpOperand &operand : definingOp->getOpOperands()) {
+          if (!isa<RankedTensorType>(operand.get().getType()))
+            continue;
+          if (Attribute src =
+                  callbacks.inferSrcEncoding(operand, info.encoding))
+            if (failed(updateLayoutHint({operand.get()}, {src, true}, func,
+                                        valueToEncoding, worklist, callbacks)))
+              return failure();
         }
       }
     } else if (auto blockArg = dyn_cast<BlockArgument>(value)) {
@@ -259,9 +232,7 @@ propagateFunctionLayoutHints(FuncOp func, const LayoutHintCallbacks &callbacks) 
       alignOperand(operand, requiredType);
   };
   func.walk([&](Operation *op) {
-    if (auto insert = dyn_cast<InsertTileOp>(op)) {
-      alignOperand(insert.getBaseMutable(), insert.getType());
-    } else if (auto loop = dyn_cast<scf::ForOp>(op)) {
+    if (auto loop = dyn_cast<scf::ForOp>(op)) {
       alignOperands(loop.getInitsMutable(), loop->getResultTypes());
     } else if (auto loop = dyn_cast<scf::WhileOp>(op)) {
       alignOperands(loop.getInitsMutable(),
