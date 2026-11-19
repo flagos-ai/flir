@@ -35,6 +35,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 
 #include <functional>
@@ -44,6 +45,11 @@
 namespace mlir {
 
 namespace ConverterUtils {
+
+// Ascend910_93 uses the same C220 buffer sizes and alignment as Ascend910B.
+inline bool isAscend910BOrC(llvm::StringRef target) {
+  return target.starts_with("Ascend910B") || target.starts_with("Ascend910_93");
+}
 
 // Map destination axes to source axes for an order-preserving unit-only
 // reshape. -1 denotes a newly inserted unit axis. Reject real dimension

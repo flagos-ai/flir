@@ -90,7 +90,7 @@ static bool supportsShortRowLoad(Operation *op, MemRefType type) {
   auto target = module ? module->getAttrOfType<hacc::TargetAttr>("hacc.target")
                        : hacc::TargetAttr();
   if (compileOn91095Flag || !target ||
-      !target.getTarget().getValue().starts_with("Ascend910B") ||
+      !ConverterUtils::isAscend910BOrC(target.getTarget().getValue()) ||
       type.getRank() != 2 || !type.hasStaticShape() || type.getDimSize(0) <= 1)
     return false;
   auto elem = type.getElementType();
@@ -1205,8 +1205,8 @@ static bool tryShortRowStore(Operation *op, Value value, Value destination,
   auto original = dyn_cast<RankedTensorType>(op->getOperand(1).getType());
   auto dst = dyn_cast<MemRefType>(destination.getType());
   if (compileOn91095Flag || !target ||
-      !target.getTarget().getValue().starts_with("Ascend910B") || !type ||
-      type.getEncoding() || type.getRank() != 2 || !original ||
+      !ConverterUtils::isAscend910BOrC(target.getTarget().getValue()) ||
+      !type || type.getEncoding() || type.getRank() != 2 || !original ||
       !original.hasStaticShape() || original.getRank() != 2 || !dst ||
       dst.getRank() != 2)
     return false;
@@ -1225,9 +1225,10 @@ static bool tryShortRowStore(Operation *op, Value value, Value destination,
 #endif
   // The masked slice may have dynamic extents. Its static physical row stride
   // bounds the short row; actual sizes are passed to the device implementation.
+  // Dense rows already have a contiguous GM store path.
   if (rows <= 1 || cols <= 0 || cols >= blockElements || failed(layout) ||
       strides[1] != 1 || ShapedType::isDynamic(strides[0]) ||
-      strides[0] < cols ||
+      strides[0] <= cols ||
       strides[0] > UINT32_MAX / (elem.getIntOrFloatBitWidth() / 8))
     return false;
   int64_t slots = std::min(int64_t(1024) / blockElements, rows) * blockElements;

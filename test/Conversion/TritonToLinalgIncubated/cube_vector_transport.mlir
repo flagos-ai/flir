@@ -1,4 +1,5 @@
 // RUN: triton-shared-opt --triton-to-linalg-incubated=named-ops=true --split-input-file %s | FileCheck %s
+// RUN: sed 's/Ascend910B4/Ascend910_9382/g' %s | triton-shared-opt --triton-to-linalg-incubated=named-ops=true --split-input-file | FileCheck %s
 // RUN: triton-shared-opt --triton-to-linalg-incubated="named-ops=true compile-on-910-95=true" --split-input-file %s | FileCheck %s --check-prefix=LEGACY --implicit-check-not=flagtree.cube_to_vector
 // REQUIRES: flir-incubated
 // LEGACY: module

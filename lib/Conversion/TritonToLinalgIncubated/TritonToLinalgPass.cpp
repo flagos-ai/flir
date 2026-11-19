@@ -551,7 +551,7 @@ void TritonToLinalgIncubatedPass::addDynamicLegal(
   auto architecture =
       getOperation()->getAttrOfType<hacc::TargetAttr>("hacc.target");
   if (!compileOn91095Flag && architecture &&
-      architecture.getTarget().getValue().starts_with("Ascend910B"))
+      ConverterUtils::isAscend910BOrC(architecture.getTarget().getValue()))
     target.addDynamicallyLegalOp<arith::DivSIOp, arith::DivUIOp, arith::RemSIOp,
                                  arith::RemUIOp>([this](Operation *op) {
       if (TTOpConverters::needsExactIntegerDivision(op))
@@ -708,7 +708,7 @@ void TritonToLinalgIncubatedPass::populateTritonToLinalgConversionPatterns(
   auto architecture =
       getOperation()->getAttrOfType<hacc::TargetAttr>("hacc.target");
   if (!compileOn91095Flag && architecture &&
-      architecture.getTarget().getValue().starts_with("Ascend910B"))
+      ConverterUtils::isAscend910BOrC(architecture.getTarget().getValue()))
     TTOpConverters::populateExactIntegerDivisionPatterns(patterns);
 
   if (!this->namedOps) {
@@ -1116,8 +1116,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
   auto permutationTarget =
       moduleOp->getAttrOfType<hacc::TargetAttr>("hacc.target");
-  if (!compileOn91095Flag && permutationTarget &&
-      permutationTarget.getTarget().getValue().starts_with("Ascend910B")) {
+  bool supportsPermutation =
+      !compileOn91095Flag && permutationTarget &&
+      ConverterUtils::isAscend910BOrC(permutationTarget.getTarget().getValue());
+  if (supportsPermutation) {
     RewritePatternSet splitPatterns(&getContext());
     splitPatterns.add<SplitBeforeTranspose>(&getContext());
     if (failed(applyPatternsGreedily(moduleOp, std::move(splitPatterns),
@@ -1305,8 +1307,7 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   }
 
   if (multibuffer && multibuffer.getValue() && !existDot && !existSIMTOp &&
-      !compileOn91095Flag && permutationTarget &&
-      permutationTarget.getTarget().getValue().starts_with("Ascend910B")) {
+      supportsPermutation) {
     // Visit only packing candidates. An extra whole-module greedy sweep can
     // reorder unrelated constants even when no pattern matches.
     SmallVector<tensor::InsertSliceOp> candidates;
@@ -1531,8 +1532,7 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
 
   // Normalize copies created during load/store conversion, after the partial
   // conversion has completed and before CANN chooses a strided DMA template.
-  if (!compileOn91095Flag && permutationTarget &&
-      permutationTarget.getTarget().getValue().starts_with("Ascend910B")) {
+  if (supportsPermutation) {
     RewritePatternSet copyPatterns(&getContext());
     copyPatterns.add<NormalizeUnitCopyStride>(&getContext());
     if (failed(applyPatternsGreedily(moduleOp, std::move(copyPatterns),

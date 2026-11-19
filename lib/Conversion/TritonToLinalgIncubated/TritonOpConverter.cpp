@@ -196,12 +196,13 @@ BitcastConverter::matchAndRewrite(triton::BitcastOp op, OpAdaptor adaptor,
   return success();
 }
 
-static bool isAscend910B(Operation *op) {
+static bool isAscend910BOrC(Operation *op) {
   auto module = op->getParentOfType<ModuleOp>();
   if (!module || compileOn91095Flag)
     return false;
   auto target = module->getAttrOfType<hacc::TargetAttr>("hacc.target");
-  return target && target.getTarget().getValue().starts_with("Ascend910B");
+  return target &&
+         ConverterUtils::isAscend910BOrC(target.getTarget().getValue());
 }
 
 // Keep byte/word storage conversion opaque until physical strides are known.
@@ -254,7 +255,7 @@ static Value tryPackedVectorTranspose(Value src, RankedTensorType resultType,
   auto srcType = dyn_cast<RankedTensorType>(src.getType());
   // The packaged primitive currently targets dav-c220. Keep the existing
   // lowering on the separately selected 910_95 architecture.
-  if (!isAscend910B(src.getParentBlock()->getParentOp()) || !srcType ||
+  if (!isAscend910BOrC(src.getParentBlock()->getParentOp()) || !srcType ||
       !srcType.hasStaticShape() || srcType.getEncoding() ||
       resultType.getEncoding() || order.empty())
     return {};
@@ -2098,7 +2099,7 @@ JoinConverter::matchAndRewrite(triton::JoinOp op, OpAdaptor adaptor,
   // explicit A/B policy; it still requires the original dense graph proof.
   bool preferNative = lowering == "native";
   bool denseNative =
-      preferNative && isAscend910B(op) && supportedElement &&
+      preferNative && isAscend910BOrC(op) && supportedElement &&
       !originalElement.isInteger(8) && inputType.hasStaticShape() &&
       !inputType.getEncoding() && !resultType.getEncoding() &&
       inputType.getRank() == 1 &&
@@ -2108,9 +2109,9 @@ JoinConverter::matchAndRewrite(triton::JoinOp op, OpAdaptor adaptor,
   // Admit the complete packed algorithm only within its index-buffer budget.
   // In particular, do not widen a large byte join and then send it to a padded
   // native transpose: that consumes far more UB than the existing interleave.
-  if (!isAscend910B(op) || !supportedElement || !inputType.hasStaticShape() ||
-      inputType.getNumElements() > 2048 || inputType.getEncoding() ||
-      resultType.getEncoding() || denseNative) {
+  if (!isAscend910BOrC(op) || !supportedElement ||
+      !inputType.hasStaticShape() || inputType.getNumElements() > 2048 ||
+      inputType.getEncoding() || resultType.getEncoding() || denseNative) {
     auto storedType = resultType;
     bool rawBits = denseNative && isa<FloatType>(originalElement);
     if (rawBits) {
@@ -2393,7 +2394,7 @@ SplitConverter::matchAndRewrite(triton::SplitOp op, OpAdaptor adaptor,
               element.isInteger(16) || element.isInteger(32);
   bool denseLoad = word && inputType.getRank() == 2 &&
                    op->hasAttr("flagtree.dense_native_permutation");
-  if (isAscend910B(op) && (word || narrow) && !inputType.getEncoding() &&
+  if (isAscend910BOrC(op) && (word || narrow) && !inputType.getEncoding() &&
       !outType.getEncoding() && (narrow || !denseLoad)) {
     int64_t count = outType.getNumElements();
     Type storageElement = narrow ? rewriter.getI16Type() : element;
@@ -2615,7 +2616,7 @@ static bool collapsesLoadedNDAxes(Operation *op) {
 static Value legalizeVectorDotOperand(Value value, Operation *dot,
                                       RewriterBase &rewriter) {
   auto type = dyn_cast<RankedTensorType>(value.getType());
-  if (!isAscend910B(dot) || !type || type.getEncoding() ||
+  if (!isAscend910BOrC(dot) || !type || type.getEncoding() ||
       !type.hasStaticShape() || !type.getElementType().isF32())
     return value;
 
@@ -2828,7 +2829,7 @@ LogicalResult legalizeCubeVectorOperands(ModuleOp module) {
   SmallVector<Operation *> consumers;
   SmallVector<bufferization::MaterializeInDestinationOp> stridedStores;
   module.walk([&](Operation *op) {
-    if (!isAscend910B(op))
+    if (!isAscend910BOrC(op))
       return;
     if (auto store = dyn_cast<bufferization::MaterializeInDestinationOp>(op)) {
       auto type = dyn_cast<MemRefType>(store.getDest().getType());

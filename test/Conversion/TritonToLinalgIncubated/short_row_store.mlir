@@ -1,4 +1,5 @@
 // RUN: triton-shared-opt --triton-to-linalg-incubated --split-input-file %s | FileCheck %s
+// RUN: sed 's/Ascend910B4/Ascend910_9382/g' %s | triton-shared-opt --triton-to-linalg-incubated --split-input-file | FileCheck %s
 // REQUIRES: flir-incubated
 
 // CHECK-LABEL: func.func @short_f32(
@@ -232,6 +233,30 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
   %one = arith.constant dense<1.000000e+00> : tensor<32x4xf64>
   %value = arith.addf %loaded, %one : tensor<32x4xf64>
   tt.store %ptr, %value : tensor<32x4x!tt.ptr<f64>>
+  tt.return
+ }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @dense_short_rows(
+// CHECK-NOT: custom_flagtree_short_row_store_
+// CHECK: bufferization.materialize_in_destination
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+ tt.func public @dense_short_rows(%out: !tt.ptr<f32>, %value: tensor<32x4xf32>) {
+  %r = tt.make_range {start = 0 : i32, end = 32 : i32} : tensor<32xi32>
+  %c = tt.make_range {start = 0 : i32, end = 4 : i32} : tensor<4xi32>
+  %s = arith.constant dense<4> : tensor<32xi32>
+  %r0 = arith.muli %r, %s : tensor<32xi32>
+  %r1 = tt.expand_dims %r0 {axis = 1 : i32} : tensor<32xi32> -> tensor<32x1xi32>
+  %c1 = tt.expand_dims %c {axis = 0 : i32} : tensor<4xi32> -> tensor<1x4xi32>
+  %rr = tt.broadcast %r1 : tensor<32x1xi32> -> tensor<32x4xi32>
+  %cc = tt.broadcast %c1 : tensor<1x4xi32> -> tensor<32x4xi32>
+  %off = arith.addi %rr, %cc : tensor<32x4xi32>
+  %p = tt.splat %out : !tt.ptr<f32> -> tensor<32x4x!tt.ptr<f32>>
+  %ptr = tt.addptr %p, %off : tensor<32x4x!tt.ptr<f32>>, tensor<32x4xi32>
+  tt.store %ptr, %value : tensor<32x4x!tt.ptr<f32>>
   tt.return
  }
 }
