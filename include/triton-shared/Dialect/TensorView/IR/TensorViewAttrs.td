@@ -77,12 +77,21 @@ def TV_StridedViewAttr : TensorView_Attr<"StridedView", "strided_view"> {
 }
 
 // #tv.gather_scatter_view<tile=[...], sparse_dim=[...], padding_value=zero>
+// #tv.gather_scatter_view<tile=[...], sparse_dim=[...], padding_value=zero,
+//                         bounds_check = true>
+//
+// With bounds_check, a sparse index outside [0, extent) of its base dimension
+// is treated as out of range: a load yields padding_value and a store is
+// skipped. Without it, no check is emitted, sparse indices must lie inside
+// the base extent, and out-of-range indices have undefined behavior. Dense
+// dimensions are always clipped to the base extent.
 def TV_GatherScatterViewAttr : TensorView_Attr<"GatherScatterView", "gather_scatter_view"> {
   let summary = "Gather/scatter view encoding.";
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$tile,
     ArrayRefParameter<"int64_t">:$sparseDim,
-    EnumParameter<TV_PaddingValue>:$paddingValue);
+    EnumParameter<TV_PaddingValue>:$paddingValue,
+    "bool":$boundsCheck);
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
 }
