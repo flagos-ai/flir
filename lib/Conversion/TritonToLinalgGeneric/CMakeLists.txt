@@ -7,6 +7,7 @@ add_triton_library(TritonToLinalgGeneric
   UseAnalysis.cpp
   HoistBroadcast.cpp
   DevicePrintOffsetRewrite.cpp
+  DebugUtils.cpp
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
@@ -14,6 +15,7 @@ add_triton_library(TritonToLinalgGeneric
   MLIRDialectUtils
   MLIRFuncDialect
   MLIRIR
+  MLIRLLVMDialect
   MLIRLinalgDialect
   MLIRMathDialect
   MLIRMemRefDialect
