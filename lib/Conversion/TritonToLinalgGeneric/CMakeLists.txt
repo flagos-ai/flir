@@ -4,8 +4,10 @@ add_triton_library(TritonToLinalgGeneric
   GenericDebug.cpp
   FunctionConverter.cpp
   ArgMinMaxConverter.cpp
+  UseAnalysis.cpp
 
   LINK_LIBS PUBLIC
+  MLIRAnalysis
   MLIRArithDialect
   MLIRDialectUtils
   MLIRIR
@@ -13,6 +15,7 @@ add_triton_library(TritonToLinalgGeneric
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRSCFDialect
+  MLIRSupport
   MLIRTensorDialect
   MLIRTransforms
   TritonIR
