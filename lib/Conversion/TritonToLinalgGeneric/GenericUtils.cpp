@@ -28,6 +28,10 @@
 #include "mlir/IR/BuiltinTypes.h"
 
 #include <cassert>
+#include <map>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace TTOpConverters {
 using namespace mlir;
@@ -90,6 +94,153 @@ SmallVector<int64_t> getUnbroadcastDims(RankedTensorType src,
     }
   }
   return unbroadcastDims;
+}
+
+void addReduceWithIndexAttr(ReduceWithIndexParams params,
+                            ConversionPatternRewriter &rewriter,
+                            linalg::ReduceOp reduceOp) {
+  const StringRef reduceRef = "reduce_mode";
+  const StringRef tieBreakLeftRef = "tie_break_left";
+  const StringRef unsignedSrcRef = "unsigned_src";
+
+  const StringRef tieBreakStr =
+      params.tieBreakType == TieBreakType::LEFT ? "true" : "false";
+  const StringRef withIndexStr =
+      params.withIndexType == ReduceWithIndexType::MAX ? "max_with_index"
+                                                       : "min_with_index";
+  const StringRef unsignedSrcStr = params.isUnsignedSrc ? "true" : "false";
+
+  reduceOp->setAttr(reduceRef, rewriter.getStringAttr(withIndexStr));
+  reduceOp->setAttr(tieBreakLeftRef, rewriter.getStringAttr(tieBreakStr));
+  reduceOp->setAttr(unsignedSrcRef, rewriter.getStringAttr(unsignedSrcStr));
+}
+
+llvm::FailureOr<ReduceWithIndexParams>
+getReduceWithIndexParams(triton::ReduceOp op) {
+  auto tritonReduceBlock = op.getBody();
+  auto *tritonYield = tritonReduceBlock->getTerminator();
+  auto yieldValues = tritonYield->getOperands();
+  constexpr int yieldValuesNum = 2;
+  if (yieldValues.empty()) {
+    return llvm::failure();
+  }
+  if (yieldValues.size() != yieldValuesNum) {
+    return ReduceWithIndexParams{};
+  }
+
+  // Unify signed/unsigned and int/float predicate
+  enum class Predicate { Undefined = 0, lt = 1, gt = 2, eq = 3 };
+  enum class Signedness { NotApplicable = 0, Signed = 1, Unsigned = 2 };
+  auto unifyPredicateI =
+      [](arith::CmpIPredicate p) -> std::pair<Predicate, Signedness> {
+    switch (p) {
+    case arith::CmpIPredicate::slt:
+      return {Predicate::lt, Signedness::Signed};
+    case arith::CmpIPredicate::ult:
+      return {Predicate::lt, Signedness::Unsigned};
+    case arith::CmpIPredicate::sgt:
+      return {Predicate::gt, Signedness::Signed};
+    case arith::CmpIPredicate::ugt:
+      return {Predicate::gt, Signedness::Unsigned};
+    case arith::CmpIPredicate::eq:
+      return {Predicate::eq, Signedness::NotApplicable};
+    default:
+      return {Predicate::Undefined, Signedness::NotApplicable};
+    }
+  };
+  auto unifyPredicateF =
+      [](arith::CmpFPredicate p) -> std::pair<Predicate, Signedness> {
+    switch (p) {
+    case arith::CmpFPredicate::OLT:
+      return {Predicate::lt, Signedness::Signed};
+    case arith::CmpFPredicate::ULT:
+      return {Predicate::lt, Signedness::Unsigned};
+    case arith::CmpFPredicate::OGT:
+      return {Predicate::gt, Signedness::Signed};
+    case arith::CmpFPredicate::UGT:
+      return {Predicate::gt, Signedness::Unsigned};
+    case arith::CmpFPredicate::OEQ:
+      return {Predicate::eq, Signedness::Signed};
+    case arith::CmpFPredicate::UEQ:
+      return {Predicate::eq, Signedness::Unsigned};
+    default:
+      return {Predicate::Undefined, Signedness::NotApplicable};
+    }
+  };
+
+  // Composite predicate to pick index of min (or max) element have to be
+  // written in following form: (v means value and i means index)
+  // For leftmost element:
+  //    (new_v == old_v and new_i < old_i) or new_v < old_v
+  //    new_v < old_v or (new_v == old_v and new_i < old_i)
+  //    new_v < old_v // python3.11 ttir
+  //    (new_v == old_v and new_i < old_i) or new_v > old_v
+  //    new_v > old_v or (new_v == old_v and new_i < old_i)
+  //    new_v > old_v // python3.11 ttir
+  // For rightmost element:
+  //    (new_v == old_v and new_i > old_i) or new_v < old_v
+  //    new_v < old_v or (new_v == old_v and new_i > old_i)
+  //    (new_v == old_v and new_i > old_i) or new_v > old_v
+  //    new_v > old_v or (new_v == old_v and new_i > old_i)
+
+  std::map<std::vector<Predicate>, std::pair<ReduceWithIndexType, TieBreakType>>
+      m{
+          // leftmost
+          {{Predicate::eq, Predicate::lt, Predicate::lt},
+           {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+          {{Predicate::lt, Predicate::eq, Predicate::lt},
+           {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+          {{Predicate::lt}, {ReduceWithIndexType::MIN, TieBreakType::LEFT}},
+          {{Predicate::eq, Predicate::lt, Predicate::gt},
+           {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+          {{Predicate::gt, Predicate::eq, Predicate::lt},
+           {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+          {{Predicate::gt}, {ReduceWithIndexType::MAX, TieBreakType::LEFT}},
+          // rightmost
+          {{Predicate::eq, Predicate::gt, Predicate::lt},
+           {ReduceWithIndexType::MIN, TieBreakType::RIGHT}},
+          {{Predicate::lt, Predicate::eq, Predicate::gt},
+           {ReduceWithIndexType::MIN, TieBreakType::RIGHT}},
+          {{Predicate::eq, Predicate::gt, Predicate::gt},
+           {ReduceWithIndexType::MAX, TieBreakType::RIGHT}},
+          {{Predicate::gt, Predicate::eq, Predicate::gt},
+           {ReduceWithIndexType::MAX, TieBreakType::RIGHT}},
+      };
+
+  std::vector<Predicate> preds;
+  std::vector<Signedness> signednesses;
+  // A better way is to trace the arith.select
+  // Checking the operations one by one is hacky :(
+  for (auto &op : tritonReduceBlock->without_terminator()) {
+    Predicate pred = Predicate::Undefined;
+    Signedness signedness = Signedness::NotApplicable;
+    if (auto cmpiOp = dyn_cast<arith::CmpIOp>(op)) {
+      auto predi = cmpiOp.getPredicate();
+      std::tie(pred, signedness) = unifyPredicateI(predi);
+    }
+    if (auto cmpfOp = dyn_cast<arith::CmpFOp>(op)) {
+      auto predf = cmpfOp.getPredicate();
+      std::tie(pred, signedness) = unifyPredicateF(predf);
+    }
+    if (pred != Predicate::Undefined) {
+      preds.push_back(pred);
+      signednesses.push_back(signedness);
+    }
+  }
+
+  // check if sequence of predicates matches any sequence for min/max
+  // leftmost/rightmost
+  if (m.find(preds) == m.end()) {
+    return llvm::failure();
+  }
+
+  assert(!signednesses.empty());
+  const bool isUnsignedSrc =
+      signednesses[0] == Signedness::Unsigned ||
+      signednesses[signednesses.size() - 1] == Signedness::Unsigned;
+  return ReduceWithIndexParams{.withIndexType = m.at(preds).first,
+                               .tieBreakType = m.at(preds).second,
+                               .isUnsignedSrc = isUnsignedSrc};
 }
 
 } // namespace GenericUtils
