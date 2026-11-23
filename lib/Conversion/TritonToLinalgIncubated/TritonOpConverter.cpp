@@ -725,8 +725,6 @@ MakeTensorPtrCanonicalizer::matchAndRewrite(triton::MakeTensorPtrOp op,
 LogicalResult
 ReduceSingleCanonicalizer::matchAndRewrite(triton::ReduceOp reduceOp,
                                            PatternRewriter &rewriter) const {
-  assert(reduceOp.getSrcs().size() <= 2 &&
-         "Only reduce or reduce with index are supported");
   auto src = reduceOp.getSrcs()[0];
   auto srcType = cast<RankedTensorType>(src.getType());
   auto srcShape = srcType.getShape();
@@ -735,15 +733,18 @@ ReduceSingleCanonicalizer::matchAndRewrite(triton::ReduceOp reduceOp,
         reduceOp, "reduce's srcs are not all with single element");
   auto loc = reduceOp->getLoc();
 
-  // Handle Reduce Value
-  auto res = reduceOp.getResult()[0];
-  Value extracted;
+  // A singleton reduction never invokes its combiner. Preserve every input,
+  // including index values carried from an earlier loop iteration and tuples
+  // whose second element is not an index.
+  SmallVector<Value> results;
   if (srcType.getRank() == 1) {
     auto zero =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
-    extracted = rewriter.create<tensor::ExtractOp>(loc, src, zero.getResult())
-                    .getResult();
+    for (Value input : reduceOp.getSrcs())
+      results.push_back(
+          rewriter.create<tensor::ExtractOp>(loc, input, zero.getResult()));
   } else {
+    auto res = reduceOp.getResult()[0];
     auto resShape = cast<RankedTensorType>(res.getType()).getShape();
     auto collapseReassociationIndicesOptional =
         getReassociationIndicesForCollapse(srcShape, resShape);
@@ -753,31 +754,11 @@ ReduceSingleCanonicalizer::matchAndRewrite(triton::ReduceOp reduceOp,
     }
     auto collapseReassociationIndices =
         collapseReassociationIndicesOptional.value();
-    extracted = rewriter
-                    .create<tensor::CollapseShapeOp>(
-                        loc, src, collapseReassociationIndices)
-                    .getResult();
+    for (Value input : reduceOp.getSrcs())
+      results.push_back(rewriter.create<tensor::CollapseShapeOp>(
+          loc, input, collapseReassociationIndices));
   }
-  res.replaceAllUsesWith(extracted);
-
-  // Handle Reduce Index
-  if (reduceOp.getSrcs().size() == 1)
-    return success();
-
-  auto resIdx = reduceOp.getResult()[1];
-  auto zeroI32 =
-      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
-  if (srcType.getRank() == 1) {
-    resIdx.replaceAllUsesWith(zeroI32);
-  } else {
-    auto resIdxShape = cast<RankedTensorType>(resIdx.getType()).getShape();
-    auto initTensor = rewriter.create<tensor::EmptyOp>(loc, resIdxShape,
-                                                       rewriter.getI32Type());
-    auto fillOp = rewriter.create<linalg::FillOp>(loc, ValueRange{zeroI32},
-                                                  ValueRange{initTensor});
-    resIdx.replaceAllUsesWith(fillOp.getResult(0));
-  }
-
+  rewriter.replaceOp(reduceOp, results);
   return success();
 }
 
