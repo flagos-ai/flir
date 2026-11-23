@@ -566,4 +566,32 @@ def CommonIR_PipeBarrierOp : CommonIR_Op<"pipe_barrier", []> {
   let assemblyFormat = "`[` $pipe `]` attr-dict";
 }
 
+//===----------------------------------------------------------------------===//
+// Tensor Layout and Tile Operations
+//===----------------------------------------------------------------------===//
+
+// ---------------------------------------------------------------------------
+// tile.set_layout — require a layout for a tensor value
+// ---------------------------------------------------------------------------
+def CommonIR_SetLayoutOp
+    : CommonIR_Op<"set_layout", [Pure, SameOperandsAndResultShape,
+                                SameOperandsAndResultElementType]> {
+  let summary = "Require a layout for a tensor value";
+  let description = [{
+    Returns the same logical tensor with an explicit layout requirement.
+    Shape and element type are unchanged. The layout is carried as an
+    attribute; the tensor types may remain unencoded before layout assignment.
+
+    Layout assignment uses the result as an anchor and may propagate the
+    requirement to surrounding operations. If the source cannot adopt that
+    layout, lowering must materialize a conversion. The target interprets and
+    validates the layout attribute; CommonIR does not prescribe its format.
+  }];
+
+  let arguments = (ins TT_Tensor:$source, AnyAttr:$layout);
+  let results = (outs TT_Tensor:$result);
+  let hasVerifier = 0;
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+}
+
 #endif // TILE_IR_OPS

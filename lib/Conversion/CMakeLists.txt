@@ -1,3 +1,7 @@
+if(TARGET TritonGPUIR)
+  add_subdirectory(CommonIRToTritonGPU)
+endif()
+
 if(NOT FLAGTREE_BACKEND STREQUAL "tsingmicro")
   add_subdirectory(TritonToLinalgExperimental)
   add_subdirectory(TritonArithToLinalg)

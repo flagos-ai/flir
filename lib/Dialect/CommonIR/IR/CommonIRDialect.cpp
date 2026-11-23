@@ -19,6 +19,7 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -27,7 +28,21 @@
 using namespace mlir;
 using namespace mlir::triton::tile;
 
+namespace {
+struct CommonIRInlinerInterface : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  // Buffer operations retain their order and SSA identity when the caller
+  // inlines them. Call legality (including noinline) belongs to its dialect.
+  bool isLegalToInline(Operation *, Region *, bool,
+                       IRMapping &) const final {
+    return true;
+  }
+};
+} // namespace
+
 void CommonIRDialect::initialize() {
+  addInterfaces<CommonIRInlinerInterface>();
   addOperations<
 #define GET_OP_LIST
 #include "mlir-ext/Dialect/CommonIR/IR/CommonIROps.cpp.inc"
