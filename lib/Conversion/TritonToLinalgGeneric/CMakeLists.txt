@@ -6,11 +6,13 @@ add_triton_library(TritonToLinalgGeneric
   ArgMinMaxConverter.cpp
   UseAnalysis.cpp
   HoistBroadcast.cpp
+  DevicePrintOffsetRewrite.cpp
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
   MLIRArithDialect
   MLIRDialectUtils
+  MLIRFuncDialect
   MLIRIR
   MLIRLinalgDialect
   MLIRMathDialect
