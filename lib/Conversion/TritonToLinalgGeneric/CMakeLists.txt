@@ -5,6 +5,7 @@ add_triton_library(TritonToLinalgGeneric
   FunctionConverter.cpp
   ArgMinMaxConverter.cpp
   UseAnalysis.cpp
+  HoistBroadcast.cpp
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
