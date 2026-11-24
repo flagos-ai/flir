@@ -28,6 +28,7 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -50,6 +51,61 @@ static bool isTensorOfPointers(Type type) {
   auto tensorType = dyn_cast<RankedTensorType>(type);
   return tensorType && isa<triton::PointerType>(tensorType.getElementType());
 }
+
+namespace {
+// Preserve the byte address of scalar BF16 -> i64 pointer reinterpretations.
+// Moving the bitcast across addptr with an unchanged element offset would
+// multiply that offset by eight instead of two.
+struct ScalarBF16ToI64PointerCast : OpRewritePattern<triton::BitcastOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(triton::BitcastOp op,
+                                PatternRewriter &rewriter) const override {
+    auto srcType = dyn_cast<triton::PointerType>(op.getSrc().getType());
+    auto dstType = dyn_cast<triton::PointerType>(op.getType());
+    if (!srcType || !dstType ||
+        srcType.getAddressSpace() != dstType.getAddressSpace() ||
+        !srcType.getPointeeType().isBF16() ||
+        !dstType.getPointeeType().isInteger(64))
+      return failure();
+
+    SmallVector<Value> offsets;
+    Value root = op.getSrc();
+    while (auto add = root.getDefiningOp<triton::AddPtrOp>()) {
+      auto offsetType = dyn_cast<IntegerType>(add.getOffset().getType());
+      if (!offsetType ||
+          (offsetType.getWidth() != 32 && offsetType.getWidth() != 64))
+        return failure();
+      offsets.push_back(add.getOffset());
+      root = add.getPtr();
+    }
+    // Kernel arguments have an unambiguous base address. Leave loop-carried
+    // pointers and other producer/type combinations on the existing path.
+    auto argument = dyn_cast<BlockArgument>(root);
+    if (!argument)
+      return failure();
+    auto func = dyn_cast<triton::FuncOp>(argument.getOwner()->getParentOp());
+    if (!func || func.getVisibility() != SymbolTable::Visibility::Public)
+      return failure();
+
+    Value address = rewriter.create<triton::PtrToIntOp>(
+        op.getLoc(), rewriter.getI64Type(), root);
+    Value bytesPerElement =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), 2, 64);
+    for (Value offset : llvm::reverse(offsets)) {
+      if (cast<IntegerType>(offset.getType()).getWidth() == 32)
+        offset = rewriter.create<arith::ExtSIOp>(op.getLoc(),
+                                                 rewriter.getI64Type(), offset);
+      Value byteOffset =
+          rewriter.create<arith::MulIOp>(op.getLoc(), offset, bytesPerElement);
+      address =
+          rewriter.create<arith::AddIOp>(op.getLoc(), address, byteOffset);
+    }
+    rewriter.replaceOpWithNewOp<triton::IntToPtrOp>(op, dstType, address);
+    return success();
+  }
+};
+} // namespace
 
 template <typename MemAccOpTy>
 bool UnstructuredMemAccessConverter<MemAccOpTy>::checkUnstructureAnnotated(
@@ -711,6 +767,13 @@ void TritonToUnstructureIncubatedPass::runOnOperation() {
 
   ModuleOp moduleOp = getOperation();
   MLIRContext *ctx = &getContext();
+
+  RewritePatternSet pointerCasts(ctx);
+  pointerCasts.add<ScalarBF16ToI64PointerCast>(ctx);
+  if (failed(applyPatternsGreedily(moduleOp, std::move(pointerCasts)))) {
+    signalPassFailure();
+    return;
+  }
 
   moduleOp->walk([this](triton::FuncOp funcOp) {
     replacePtrArguments(funcOp, offsetMapForLoopArgs);
