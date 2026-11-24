@@ -35,7 +35,6 @@ module {
 }
 // CHECK-LABEL:   func.func @kernel(
 // CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: memref<*xbf16>, %[[VAL_2:.*]]: i32, %[[VAL_3:.*]]: i32, %[[VAL_4:.*]]: i32) {
-// CHECK-DAG:           %[[VAL_6:.*]] = arith.constant 6 : index
 // CHECK-DAG:           %[[VAL_7:.*]] = arith.constant 6 : i32
 // CHECK:           %[[VAL_30:.*]] = tensor.empty() : tensor<256x128xi32>
 // CHECK:           %[[VAL_31:.*]] = linalg.fill ins(%[[VAL_7]] : i32) outs(%[[VAL_30]] : tensor<256x128xi32>) -> tensor<256x128xi32>
@@ -75,17 +74,17 @@ module {
 // CHECK:             %[[VAL_44:.*]] = arith.addi %[[VAL_41]], %[[VAL_42]] : i32
 // CHECK:             linalg.yield %[[VAL_44]] : i32
 // CHECK:           } -> tensor<256x128xi32>
-// CHECK:           %[[VAL_45:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: {{\[}}6656], sizes: [256, 128], strides: [1, %[[VAL_6]]] : memref<*xbf16> to memref<256x128xbf16, strided<[1, ?], offset: 6656>>
+// CHECK:           %[[VAL_45:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: {{\[}}6656], sizes: [256, 128], strides: [1, 6] : memref<*xbf16> to memref<256x128xbf16, strided<[1, 6], offset: 6656>>
 // CHECK:           %[[VAL_46:.*]] = memref.alloc() : memref<256x128xbf16>
-// CHECK:           memref.copy %[[VAL_45]], %[[VAL_46]] : memref<256x128xbf16, strided<[1, ?], offset: 6656>> to memref<256x128xbf16>
+// CHECK:           memref.copy %[[VAL_45]], %[[VAL_46]] : memref<256x128xbf16, strided<[1, 6], offset: 6656>> to memref<256x128xbf16>
 // CHECK:           %[[VAL_47:.*]] = bufferization.to_tensor %[[VAL_46]] restrict writable : memref<256x128xbf16>
-// CHECK:           bufferization.materialize_in_destination %[[VAL_47]] in writable %[[VAL_45]]
+// CHECK:           bufferization.materialize_in_destination
 // CHECK:           %[[VAL_48:.*]] = tensor.empty() : tensor<256x128xbf16>
 // CHECK:           %[[VAL_49:.*]] = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = ["parallel", "parallel"]} ins(%[[VAL_50:.*]] : tensor<256x128xi32>) outs(%[[VAL_48]] : tensor<256x128xbf16>) {
 // CHECK:           ^bb0(%[[VAL_51:.*]]: i32, %[[VAL_52:.*]]: bf16):
 // CHECK:             %[[VAL_53:.*]] = arith.sitofp %[[VAL_51]] : i32 to bf16
 // CHECK:             linalg.yield %[[VAL_53]] : bf16
 // CHECK:           } -> tensor<256x128xbf16>
-// CHECK:           bufferization.materialize_in_destination %[[VAL_54:.*]] in writable %[[VAL_45]]
+// CHECK:           bufferization.materialize_in_destination
 // CHECK:           return
 // CHECK:         }

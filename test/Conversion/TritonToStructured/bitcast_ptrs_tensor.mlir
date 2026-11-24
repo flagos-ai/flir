@@ -46,6 +46,6 @@ module {
 // CHECK:         [[VAR_8_:%.+]] = arith.minsi [[VAR_6_]], [[VAR_7_]] : index
 // CHECK:         [[VAR_9_:%.+]] = arith.maxsi [[VAR_8_]], [[VAR_2_]] : index
 // CHECK:         [[VAR_10_:%.+]] = arith.subi [[VAR_9_]], [[VAR_2_]] : index
-// CHECK:         "tts.store"([[VAR_4_]], [[VAR_5_]], [[VAR_10_]]) <{static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<512x!tt.ptr<i8>>, tensor<512xi8>, index) -> ()
+// CHECK:         "tts.store"([[VAR_4_]], [[VAR_5_]], [[VAR_10_]]) <{{.*}}static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<512x!tt.ptr<i8>>, tensor<512xi8>, index) -> ()
 // CHECK:         return
 // CHECK:       }

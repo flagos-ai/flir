@@ -35,13 +35,14 @@ using namespace mlir;
 using namespace triton;
 //using namespace mlir::mathext;
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DECL
+#define GEN_PASS_DEF_TRITONTOLINALGEXPERIMENTAL
 #include "triton-shared/Conversion/TritonToLinalgExperimental/Passes.h.inc"
 
 namespace {
 
 class TritonToLinalgExperimentalPass
-    : public TritonToLinalgExperimentalBase<TritonToLinalgExperimentalPass> {
+    : public ::impl::TritonToLinalgExperimentalBase<TritonToLinalgExperimentalPass> {
 
 public:
   void getDependentDialects(DialectRegistry &registry) const override {

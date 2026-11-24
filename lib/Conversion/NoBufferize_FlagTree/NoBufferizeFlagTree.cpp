@@ -25,7 +25,7 @@
 #define DEBUG_TYPE "no-bufferize-flagtree"
 
 using namespace mlir;
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DECL
 #include "triton-shared/Conversion/NoBufferize_FlagTree/Passes.h.inc"
 
 namespace {

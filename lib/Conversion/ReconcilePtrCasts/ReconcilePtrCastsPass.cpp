@@ -34,7 +34,8 @@
 using namespace mlir;
 using namespace triton;
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DECL
+#define GEN_PASS_DEF_RECONCILEPTRCASTS
 #include "triton-shared/Conversion/ReconcilePtrCasts/Passes.h.inc"
 
 namespace {
@@ -61,7 +62,7 @@ struct SimplifyUnrealizedCast
       }
 
       auto prevInput = unrealizedCast.getInputs().front();
-      auto newCast = rewriter.create<UnrealizedConversionCastOp>(
+      auto newCast = UnrealizedConversionCastOp::create(rewriter,
           op->getLoc(), op->getResultTypes(), ValueRange{prevInput});
 
       rewriter.replaceOp(op, newCast);
@@ -90,10 +91,10 @@ struct FromMemrefConverter
     if (unrankedInput && isa<triton::PointerType, ptr::PtrType>(outType)) {
       // from_memref only takes ranked memref, cast the unranked memref to
       // ranked memref first.
-      auto rankedMemref = rewriter.create<memref::CastOp>(
+      auto rankedMemref = memref::CastOp::create(rewriter,
           op.getLoc(), MemRefType::get({}, unrankedInput.getElementType()),
           input);
-      auto memrefToPtr = rewriter.create<tptr::FromMemrefOp>(
+      auto memrefToPtr = tptr::FromMemrefOp::create(rewriter,
 #if LLVM_VERSION_MAJOR < 22
           op->getLoc(), ptr::PtrType::get(rewriter.getContext()),
 #else
@@ -129,10 +130,10 @@ struct ToMemrefConverter : public OpRewritePattern<UnrealizedConversionCastOp> {
       // to_memref can only cast to ranked static shape memref, we have to cast
       // the resulting memref back to unranked
       auto elemType = outUnrankedMemrefType.getElementType();
-      auto ptrToMemref = rewriter.create<tptr::ToMemrefOp>(
+      auto ptrToMemref = tptr::ToMemrefOp::create(rewriter,
           op->getLoc(), MemRefType::get({1}, elemType), input);
 
-      auto newUnrankedMemref = rewriter.create<memref::CastOp>(
+      auto newUnrankedMemref = memref::CastOp::create(rewriter,
           op.getLoc(), MemRefType::get({ShapedType::kDynamic}, elemType),
           ptrToMemref);
 
@@ -146,7 +147,7 @@ struct ToMemrefConverter : public OpRewritePattern<UnrealizedConversionCastOp> {
 };
 
 class ReconcilePtrCastsPass
-    : public ReconcilePtrCastsBase<ReconcilePtrCastsPass> {
+    : public ::impl::ReconcilePtrCastsBase<ReconcilePtrCastsPass> {
 
 public:
   void getDependentDialects(DialectRegistry &registry) const override {

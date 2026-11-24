@@ -34,16 +34,14 @@ module {
 }
 // CHECK-LABEL:   func.func @kernel(
 // CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: memref<*xbf16>, %[[VAL_2:.*]]: i32, %[[VAL_3:.*]]: i32, %[[VAL_4:.*]]: i32, %[[VAL_5:.*]]: i32) {
-// CHECK:           %[[VAL_6:.*]] = arith.constant 11 : index
-// CHECK:           %[[VAL_7:.*]] = arith.constant 20480 : index
 // CHECK:           %[[VAL_8:.*]] = arith.index_cast %[[VAL_3]] : i32 to index
-// CHECK:           %[[VAL_9:.*]] = arith.addi %[[VAL_8]], %[[VAL_7]] : index
-// CHECK:           %[[VAL_10:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_9]]], sizes: [1024], strides: {{\[}}%[[VAL_6]]] : memref<*xbf16> to memref<1024xbf16, strided<[?], offset: ?>>
+// CHECK:           %[[VAL_9:.*]] = arith.addi %[[VAL_8]], %c20480 : index
+// CHECK:           %[[VAL_10:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_9]]], sizes: [1024], strides: {{\[}}11] : memref<*xbf16> to memref<1024xbf16, strided<[11], offset: ?>>
 // CHECK:           %[[VAL_11:.*]] = arith.index_cast %[[VAL_3]] : i32 to index
 // CHECK:           %[[VAL_12:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: {{\[}}%[[VAL_11]]], sizes: [1024], strides: [1] : memref<*xbf16> to memref<1024xbf16, strided<[1], offset: ?>>
 // CHECK:           %[[VAL_13:.*]] = memref.alloc() : memref<1024xbf16>
-// CHECK:           memref.copy %[[VAL_10]], %[[VAL_13]] : memref<1024xbf16, strided<[?], offset: ?>> to memref<1024xbf16>
+// CHECK:           memref.copy %[[VAL_10]], %[[VAL_13]] : memref<1024xbf16, strided<[11], offset: ?>> to memref<1024xbf16>
 // CHECK:           %[[VAL_14:.*]] = bufferization.to_tensor %[[VAL_13]] restrict writable : memref<1024xbf16>
-// CHECK:           bufferization.materialize_in_destination %[[VAL_14]] in writable %[[VAL_12]]
+// CHECK:           bufferization.materialize_in_destination
 // CHECK:           return
 // CHECK:         }

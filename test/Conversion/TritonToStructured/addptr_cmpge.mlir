@@ -5,8 +5,8 @@
 //
 // A `cmpi sge x, 0` mask is treated as always-true only when the lower bound
 // of x is statically >= 0. With a dynamic lower bound (e.g. offsets derived
-// from the program id), MaskAnalysis bails out and the load/store is left
-// untouched for the unstructured lowering, which preserves the mask.
+// from the program id), the interval mask model computes the offset at
+// runtime, keeping the load structured.
 
 // Example of the triton kernel that generates the loads/stores with cmp ge 0.
 // The boundary_check fields of the load/stores, along with preprocessing the
@@ -50,8 +50,9 @@ tt.func public @test_masked_load(%arg0: !tt.ptr<f16>) -> tensor<16x16xf16> {
 }
 
 // CHECK:         tt.func public @test_masked_load
-// CHECK:           tt.load
-// CHECK-NOT:       tts.load
+// CHECK:           "tts.load"
+// CHECK-SAME:      static_mask_dims = array<i64: 16, -9223372036854775808>
+// CHECK-SAME:      static_mask_offsets = array<i64: 0, -9223372036854775808>
 // CHECK:           tt.return
 
 // -----
@@ -74,5 +75,5 @@ tt.func public @test_masked_store(%arg0: !tt.ptr<f16>) {
 // CHECK:         tt.func public @test_masked_store([[arg0_:%.+]]: !tt.ptr<f16>) {
 // CHECK-DAG:       [[VAR_cst_:%.+]] = arith.constant dense<1.500000e+01> : tensor<16x16xf16>
 // CHECK-DAG:       [[VAR_0_:%.+]] = tts.make_tptr [[arg0_]] to sizes: [16, 16], strides: [1, 0], offsets: [0, 0], shape: [0, 0], order: [] : <f16> to tensor<16x16x!tt.ptr<f16>>
-// CHECK:           "tts.store"([[VAR_0_]], [[VAR_cst_]]) <{static_mask_dims = array<i64: 16, 16>}> : (tensor<16x16x!tt.ptr<f16>>, tensor<16x16xf16>) -> ()
+// CHECK:           "tts.store"([[VAR_0_]], [[VAR_cst_]]) <{{.*}}static_mask_dims = array<i64: 16, 16>{{.*}} : (tensor<16x16x!tt.ptr<f16>>, tensor<16x16xf16>) -> ()
 // CHECK:         }

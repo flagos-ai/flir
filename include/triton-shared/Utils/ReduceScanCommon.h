@@ -189,8 +189,8 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
     auto ty = isa<RankedTensorType>(valueType)
                   ? cast<RankedTensorType>(valueType).getElementType()
                   : valueType;
-    auto empty = rewriter.create<tensor::EmptyOp>(val.getLoc(), shape, ty);
-    Value res = rewriter.create<linalg::FillOp>(
+    auto empty = tensor::EmptyOp::create(rewriter, val.getLoc(), shape, ty);
+    Value res = linalg::FillOp::create(rewriter,
         val.getLoc(), ValueRange{val}, ValueRange{empty}).getResult(0);
     rewriter.restoreInsertionPoint(ip);
     return res;
@@ -205,7 +205,7 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
 
     SmallVector<Value, 8> dynamicIndices = loopIndices;
     dynamicIndices.insert(dynamicIndices.end(), shape.size() - axis,
-                          rewriter.create<arith::ConstantIndexOp>(loc, 0));
+                          arith::ConstantIndexOp::create(rewriter, loc, 0));
 
     SmallVector<int64_t> staticSize(axis, 1);
     staticSize.insert(staticSize.end(), shape.begin() + axis, shape.end());
@@ -251,7 +251,7 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
     SmallVector<Value> res(inputs.size());
     std::transform(inputs.begin(), inputs.end(), res.begin(), [&](auto val) {
       auto valType = cast<RankedTensorType>(val.getType());
-      return rewriter.create<tensor::EmptyOp>(loc, outputShape,
+      return tensor::EmptyOp::create(rewriter, loc, outputShape,
                                               valType.getElementType());
     });
 
@@ -260,14 +260,14 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
 
     std::function<void(unsigned)> buildLoops = [&](unsigned d) {
       // Setup loop bounds and step.
-      Value lowerBound = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      Value lowerBound = arith::ConstantIndexOp::create(rewriter, loc, 0);
       Value upperBound =
-          rewriter.create<arith::ConstantIndexOp>(loc, inputShape[d]);
-      Value step = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+          arith::ConstantIndexOp::create(rewriter, loc, inputShape[d]);
+      Value step = arith::ConstantIndexOp::create(rewriter, loc, 1);
 
       SmallVector<Value> curRes =
           d == 0 ? res : loops[d - 1].getInitArgs().take_front(res.size());
-      auto loop = rewriter.create<scf::ForOp>(loc, lowerBound, upperBound, step,
+      auto loop = scf::ForOp::create(rewriter, loc, lowerBound, upperBound, step,
                                               ValueRange{curRes});
       auto loopIdx = loop.getInductionVar();
       loopIndices.push_back(loopIdx);
@@ -282,7 +282,7 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
             tensorTransform(rewriter, loc, loopIndices, inputType, axis);
         for (size_t i = 0; i < inputs.size(); ++i) {
           auto valueType = cast<RankedTensorType>(inputs[i].getType());
-          auto extractTensor = rewriter.create<tensor::ExtractSliceOp>(
+          auto extractTensor = tensor::ExtractSliceOp::create(rewriter,
               loc,
               RankedTensorType::get(inputStaticSize,
                                     valueType.getElementType()),
@@ -290,7 +290,7 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
               /*strides*/ ValueRange(),
               SmallVector<int64_t>(inputShape.size(), ShapedType::kDynamic),
               inputStaticSize, inputStaticStride);
-          subInputs[i] = rewriter.create<tensor::CollapseShapeOp>(
+          subInputs[i] = tensor::CollapseShapeOp::create(rewriter,
               loc, extractTensor, inputReassociation);
         }
 
@@ -307,17 +307,17 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
                                                   resType.getElementType());
           // {shape[axis],shape[axis+1],..shape[rank]} ->
           // {1,1,..shape[axis],shape[axis+1],..shape[rank]}
-          Value reshaped = rewriter.create<tensor::ExpandShapeOp>(
+          Value reshaped = tensor::ExpandShapeOp::create(rewriter,
               loc, targetType, resElems[i], outputReassociation);
 
-          curRes[i] = rewriter.create<tensor::InsertSliceOp>(
+          curRes[i] = tensor::InsertSliceOp::create(rewriter,
               loc, reshaped, curRes[i], outputDynamicIndices,
               /*sizes*/ ValueRange(),
               /*strides*/ ValueRange(),
               SmallVector<int64_t>(outputShape.size(), ShapedType::kDynamic),
               outputStaticSize, outputStaticStride);
         }
-        rewriter.create<scf::YieldOp>(loc, curRes);
+        scf::YieldOp::create(rewriter, loc, curRes);
         return;
       }
       buildLoops(d + 1);
@@ -325,7 +325,7 @@ struct ReduceScanOpConversionBase : public OpConversionPattern<OpT> {
       rewriter.setInsertionPointToEnd(loop.getBody());
       SmallVector<Value> yieldValues =
           loops[d + 1].getResults().take_front(res.size());
-      rewriter.create<scf::YieldOp>(loc, yieldValues);
+      scf::YieldOp::create(rewriter, loc, yieldValues);
       rewriter.setInsertionPointAfter(loop);
     };
 

@@ -68,9 +68,9 @@ static Value ensureMemRef(OpBuilder &b, Location loc, Value val,
     return val;
   auto mrt = MemRefType::get(shape, elemTy);
 #if LLVM_VERSION_MAJOR < 22
-  return b.create<bufferization::ToMemrefOp>(loc, mrt, val);
+  return bufferization::ToMemrefOp::create(b, loc, mrt, val);
 #else
-  return b.create<bufferization::ToBufferOp>(loc, mrt, val);
+  return bufferization::ToBufferOp::create(b, loc, mrt, val);
 #endif
 }
 
@@ -92,27 +92,27 @@ Value AtomicRMWConverter::buildBinaryOp(OpBuilder &b, Location loc,
                                         Value lhs, Value rhs) const {
   switch (kind) {
   case triton::RMWOp::FADD:
-    return b.create<arith::AddFOp>(loc, lhs, rhs);
+    return arith::AddFOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::ADD:
-    return b.create<arith::AddIOp>(loc, lhs, rhs);
+    return arith::AddIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::XOR:
-    return b.create<arith::XOrIOp>(loc, lhs, rhs);
+    return arith::XOrIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::OR:
-    return b.create<arith::OrIOp>(loc, lhs, rhs);
+    return arith::OrIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::AND:
-    return b.create<arith::AndIOp>(loc, lhs, rhs);
+    return arith::AndIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::MAX:
     return isa<FloatType>(elemTy)
-               ? b.create<arith::MaxNumFOp>(loc, lhs, rhs).getResult()
-               : b.create<arith::MaxSIOp>(loc, lhs, rhs).getResult();
+               ? arith::MaxNumFOp::create(b, loc, lhs, rhs).getResult()
+               : arith::MaxSIOp::create(b, loc, lhs, rhs).getResult();
   case triton::RMWOp::MIN:
     return isa<FloatType>(elemTy)
-               ? b.create<arith::MinNumFOp>(loc, lhs, rhs).getResult()
-               : b.create<arith::MinSIOp>(loc, lhs, rhs).getResult();
+               ? arith::MinNumFOp::create(b, loc, lhs, rhs).getResult()
+               : arith::MinSIOp::create(b, loc, lhs, rhs).getResult();
   case triton::RMWOp::UMAX:
-    return b.create<arith::MaxUIOp>(loc, lhs, rhs);
+    return arith::MaxUIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::UMIN:
-    return b.create<arith::MinUIOp>(loc, lhs, rhs);
+    return arith::MinUIOp::create(b, loc, lhs, rhs);
   case triton::RMWOp::XCHG:
     return rhs; // exchange: new value is simply rhs
   default:
@@ -142,7 +142,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
 
   // ── Fast-path: mask 全 false → op 是 no-op ───────────────────────────────
   if (mask && isSplatFalse(mask)) {
-    Value zero = rewriter.create<arith::ConstantOp>(
+    Value zero = arith::ConstantOp::create(rewriter,
         loc, elemTy, rewriter.getZeroAttr(elemTy));
     rewriter.replaceOp(op, zero);
     return success();
@@ -157,8 +157,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
     if (auto ptrTy = dyn_cast<triton::PointerType>(rawPtr.getType())) {
       elemTy = ptrTy.getPointeeType();
       auto memrefTy = MemRefType::get({ShapedType::kDynamic}, elemTy);
-      ptr = rewriter
-                .create<UnrealizedConversionCastOp>(loc, TypeRange{memrefTy},
+      ptr = UnrealizedConversionCastOp::create(rewriter, loc, TypeRange{memrefTy},
                                                     ValueRange{rawPtr})
                 .getResult(0);
     } else if (auto memrefTy = dyn_cast<MemRefType>(rawPtr.getType())) {
@@ -168,14 +167,14 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
       return rewriter.notifyMatchFailure(op, "scalar: unexpected ptr type");
     }
 
-    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value old = rewriter.create<memref::LoadOp>(loc, ptr, ValueRange{c0});
+    Value c0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
+    Value old = memref::LoadOp::create(rewriter, loc, ptr, ValueRange{c0});
 
     bool unconditional = (!mask || isSplatTrue(mask));
 
     auto emitStore = [&](OpBuilder &b, Location l) {
       Value newVal = buildBinaryOp(b, l, rmwKind, elemTy, old, val);
-      b.create<memref::StoreOp>(l, newVal, ptr, ValueRange{c0});
+      memref::StoreOp::create(b, l, newVal, ptr, ValueRange{c0});
     };
 
     if (unconditional) {
@@ -184,14 +183,14 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
       Value maskScalar = mask;
       // mask 如果还是 tt.ptr 转来的 memref 的话，load 出来
       if (isa<MemRefType>(mask.getType())) {
-        Value mc0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+        Value mc0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
         maskScalar =
-            rewriter.create<memref::LoadOp>(loc, mask, ValueRange{mc0});
+            memref::LoadOp::create(rewriter, loc, mask, ValueRange{mc0});
       }
-      rewriter.create<scf::IfOp>(loc, maskScalar,
+      scf::IfOp::create(rewriter, loc, maskScalar,
                                  [&](OpBuilder &b, Location l) {
                                    emitStore(b, l);
-                                   b.create<scf::YieldOp>(l);
+                                   scf::YieldOp::create(b, l);
                                  });
     }
 
@@ -217,8 +216,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
                                          "tensor ptr element is not tt.ptr");
     elemTy = ptrElemTy.getPointeeType();
     auto memrefTy = MemRefType::get(shape, elemTy);
-    ptrMemRef = rewriter
-                    .create<UnrealizedConversionCastOp>(
+    ptrMemRef = UnrealizedConversionCastOp::create(rewriter,
                         loc, TypeRange{memrefTy}, ValueRange{rawPtr})
                     .getResult(0);
   } else if (auto memrefTy = dyn_cast<MemRefType>(rawPtr.getType())) {
@@ -232,8 +230,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
   Value valMR;
   if (isa<RankedTensorType>(val.getType())) {
     auto valMemRefTy = MemRefType::get(shape, elemTy);
-    valMR = rewriter
-                .create<UnrealizedConversionCastOp>(loc, TypeRange{valMemRefTy},
+    valMR = UnrealizedConversionCastOp::create(rewriter, loc, TypeRange{valMemRefTy},
                                                     ValueRange{val})
                 .getResult(0);
   } else {
@@ -242,7 +239,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
 
   // result buffer（存 old values）
   Value resultBuf =
-      rewriter.create<memref::AllocOp>(loc, MemRefType::get(shape, elemTy));
+      memref::AllocOp::create(rewriter, loc, MemRefType::get(shape, elemTy));
 
   auto idMap = rewriter.getMultiDimIdentityMap(rank);
   SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
@@ -252,8 +249,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
   if (needMask) {
     auto maskMemRefTy = MemRefType::get(shape, rewriter.getI1Type());
     if (isa<RankedTensorType>(mask.getType())) {
-      maskMR = rewriter
-                   .create<UnrealizedConversionCastOp>(
+      maskMR = UnrealizedConversionCastOp::create(rewriter,
                        loc, TypeRange{maskMemRefTy}, ValueRange{mask})
                    .getResult(0);
     } else {
@@ -269,7 +265,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
     maps.push_back(idMap);
   }
 
-  auto genericOp = rewriter.create<linalg::GenericOp>(
+  auto genericOp = linalg::GenericOp::create(rewriter,
       loc, TypeRange{}, inputs, outputs, maps, iters,
       [&](OpBuilder &b, Location l, ValueRange args) {
         Value ptrElem = args[0];
@@ -278,9 +274,9 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
         Value writeBack = computed;
         if (needMask) {
           Value maskElem = args[2];
-          writeBack = b.create<arith::SelectOp>(l, maskElem, computed, ptrElem);
+          writeBack = arith::SelectOp::create(b, l, maskElem, computed, ptrElem);
         }
-        b.create<linalg::YieldOp>(l, ValueRange{writeBack, ptrElem});
+        linalg::YieldOp::create(b, l, ValueRange{writeBack, ptrElem});
       });
 
   MLIRContext *context = rewriter.getContext();
@@ -312,7 +308,7 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
       rewriter.getStringAttr(stringifyEnum(op.getScope())));
   genericOp->setAttr("Software", rewriter.getUnitAttr());
 
-  Value resultTensor = rewriter.create<bufferization::ToTensorOp>(
+  Value resultTensor = bufferization::ToTensorOp::create(rewriter,
       loc, tensorResultTy, resultBuf);
   rewriter.replaceOp(op, resultTensor);
   return success();
@@ -336,25 +332,25 @@ AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op,
         "[AtomicCASConverter] ptr must be MemRefType after type conversion");
 
   Type elemTy = ptrMRT.getElementType();
-  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
 
   // Load old value.
-  Value old = rewriter.create<memref::LoadOp>(loc, ptr, ValueRange{c0});
+  Value old = memref::LoadOp::create(rewriter, loc, ptr, ValueRange{c0});
 
   // Compare old == cmp.
   Value eq;
   if (isa<FloatType>(elemTy)) {
-    eq = rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OEQ, old,
+    eq = arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OEQ, old,
                                         cmp);
   } else {
     eq =
-        rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, old, cmp);
+        arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq, old, cmp);
   }
 
   // Conditionally store new value.
-  rewriter.create<scf::IfOp>(loc, eq, [&](OpBuilder &b, Location l) {
-    b.create<memref::StoreOp>(l, val, ptr, ValueRange{c0});
-    b.create<scf::YieldOp>(l);
+  scf::IfOp::create(rewriter, loc, eq, [&](OpBuilder &b, Location l) {
+    memref::StoreOp::create(b, l, val, ptr, ValueRange{c0});
+    scf::YieldOp::create(b, l);
   });
 
   // Result is the old value before the potential swap.
@@ -385,9 +381,9 @@ ScalarAtomicRMWCanonicalizer::matchAndRewrite(triton::AtomicRMWOp op,
     return failure();
 
   Location loc = op.getLoc();
-  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
   Value scalarMask =
-      rewriter.create<tensor::ExtractOp>(loc, mask, ValueRange{c0});
+      tensor::ExtractOp::create(rewriter, loc, mask, ValueRange{c0});
 
   rewriter.replaceOpWithNewOp<triton::AtomicRMWOp>(
       op, op.getResult().getType(), op.getAtomicRmwOpAttr(), op.getPtr(),
@@ -442,16 +438,16 @@ AtomicMaxMinCanonicalizer::matchAndRewrite(triton::AtomicRMWOp op,
     unsigned dstW = cast<FloatType>(pointeeTy).getWidth();
     unsigned srcW = cast<FloatType>(valTy).getWidth();
     if (dstW > srcW)
-      casted = rewriter.create<arith::ExtFOp>(loc, dstTy, val);
+      casted = arith::ExtFOp::create(rewriter, loc, dstTy, val);
     else
-      casted = rewriter.create<arith::TruncFOp>(loc, dstTy, val);
+      casted = arith::TruncFOp::create(rewriter, loc, dstTy, val);
   } else if (isa<IntegerType>(pointeeTy) && isa<IntegerType>(valTy)) {
     unsigned dstW = cast<IntegerType>(pointeeTy).getWidth();
     unsigned srcW = cast<IntegerType>(valTy).getWidth();
     if (dstW > srcW)
-      casted = rewriter.create<arith::ExtSIOp>(loc, dstTy, val);
+      casted = arith::ExtSIOp::create(rewriter, loc, dstTy, val);
     else
-      casted = rewriter.create<arith::TruncIOp>(loc, dstTy, val);
+      casted = arith::TruncIOp::create(rewriter, loc, dstTy, val);
   } else {
     // Mixed float/int – unsupported here.
     return failure();

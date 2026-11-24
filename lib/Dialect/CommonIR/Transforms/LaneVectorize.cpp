@@ -243,7 +243,7 @@ void dumpLaneGroup(StringRef label, ArrayRef<Value> lanes, Value packed) {
 
 Value buildShapeConst(OpBuilder &builder, Location loc,
                       ArrayRef<int64_t> shape) {
-  return builder.create<arith::ConstantOp>(loc,
+  return arith::ConstantOp::create(builder, loc,
                                            builder.getI64TensorAttr(shape));
 }
 
@@ -316,7 +316,7 @@ Value packContiguousSlices(OpBuilder &builder, Location loc,
   wideShape.append(laneTy.getShape().begin() + 1, laneTy.getShape().end());
   auto wideTy = RankedTensorType::get(wideShape, laneTy.getElementType(),
                                       laneTy.getEncoding());
-  Value wide = builder.create<tensor::ExtractSliceOp>(
+  Value wide = tensor::ExtractSliceOp::create(builder,
       loc, wideTy, source, newOffsets, newSizes, newStrides);
 
   SmallVector<int64_t> packedShape;
@@ -324,7 +324,7 @@ Value packContiguousSlices(OpBuilder &builder, Location loc,
   packedShape.append(laneTy.getShape().begin(), laneTy.getShape().end());
   auto packedTy = RankedTensorType::get(packedShape, laneTy.getElementType(),
                                         laneTy.getEncoding());
-  return builder.create<tensor::ReshapeOp>(
+  return tensor::ReshapeOp::create(builder,
       loc, packedTy, wide, buildShapeConst(builder, loc, packedShape));
 }
 
@@ -346,7 +346,7 @@ Value packLanes(OpBuilder &builder, Location loc, ArrayRef<Value> lanes) {
       singletonLaneShape, laneTy.getElementType(), laneTy.getEncoding());
 
   auto reshapeLane = [&](Value lane) -> Value {
-    return builder.create<tensor::ReshapeOp>(
+    return tensor::ReshapeOp::create(builder,
         loc, singletonLaneTy, lane,
         buildShapeConst(builder, loc, singletonLaneShape));
   };
@@ -361,7 +361,7 @@ Value packLanes(OpBuilder &builder, Location loc, ArrayRef<Value> lanes) {
   packedShape.append(laneTy.getShape().begin(), laneTy.getShape().end());
   auto packedTy = RankedTensorType::get(packedShape, laneTy.getElementType(),
                                         laneTy.getEncoding());
-  return builder.create<tensor::ConcatOp>(loc, packedTy, 0, concatOperands);
+  return tensor::ConcatOp::create(builder, loc, packedTy, 0, concatOperands);
 }
 
 // Inverse of packLanes: slices the leading lane dimension back into `laneCount`
@@ -398,9 +398,9 @@ SmallVector<Value> unpackLanes(OpBuilder &builder, Location loc, Value packed,
     SmallVector<OpFoldResult> offsets(packedTy.getRank(),
                                       builder.getIndexAttr(0));
     offsets[0] = builder.getIndexAttr(laneIdx);
-    Value slice = builder.create<tensor::ExtractSliceOp>(
+    Value slice = tensor::ExtractSliceOp::create(builder,
         loc, singletonLaneTy, packed, offsets, sizes, strides);
-    Value lane = builder.create<tensor::ReshapeOp>(
+    Value lane = tensor::ReshapeOp::create(builder,
         loc, laneTy, slice, buildShapeConst(builder, loc, laneShape));
     lanes.push_back(lane);
   }
@@ -609,12 +609,12 @@ Value widenPacked(OpBuilder &builder, Location loc, Value v,
     auto nextTy = RankedTensorType::get(shape, curTy.getElementType(),
                                         curTy.getEncoding());
     cur =
-        builder.create<triton::ExpandDimsOp>(loc, nextTy, cur, curTy.getRank());
+        triton::ExpandDimsOp::create(builder, loc, nextTy, cur, curTy.getRank());
     curTy = nextTy;
   }
   if (curTy == dstTy)
     return cur;
-  return builder.create<triton::BroadcastOp>(loc, dstTy, cur);
+  return triton::BroadcastOp::create(builder, loc, dstTy, cur);
 }
 
 // Brings a packed/shared value to the packed shape `dstTy`.
@@ -633,12 +633,12 @@ Value materialize(OpBuilder &builder, Location loc, Packing pv,
     auto expandedTy = RankedTensorType::get(shape, srcTy.getElementType(),
                                             srcTy.getEncoding());
     Value expanded =
-        builder.create<triton::ExpandDimsOp>(loc, expandedTy, pv.value, 0);
-    return builder.create<triton::BroadcastOp>(loc, dstTy, expanded);
+        triton::ExpandDimsOp::create(builder, loc, expandedTy, pv.value, 0);
+    return triton::BroadcastOp::create(builder, loc, dstTy, expanded);
   }
 
   // Lane-invariant scalar: broadcast to the packed shape.
-  return builder.create<triton::SplatOp>(loc, dstTy, pv.value);
+  return triton::SplatOp::create(builder, loc, dstTy, pv.value);
 }
 
 // Creates a `tt.reduce` over `src` along `axis` with an empty combine region
@@ -646,7 +646,7 @@ Value materialize(OpBuilder &builder, Location loc, Packing pv,
 // region, ready for the caller to emit the combiner.
 triton::ReduceOp createEmptyReduce(OpBuilder &builder, Location loc, Value src,
                                    int64_t axis) {
-  auto reduce = builder.create<triton::ReduceOp>(loc, src, axis);
+  auto reduce = triton::ReduceOp::create(builder, loc, src, axis);
   Block *block = builder.createBlock(&reduce.getCombineOp());
   auto elemTy = cast<RankedTensorType>(src.getType()).getElementType();
   block->addArgument(elemTy, loc);
@@ -667,7 +667,7 @@ Value buildReduceFromRegion(OpBuilder &builder, Location loc, Value src,
   mapping.map(protoBlock.getArgument(0), block->getArgument(0));
   mapping.map(protoBlock.getArgument(1), block->getArgument(1));
   Operation *c = builder.clone(*combiner, mapping);
-  builder.create<triton::ReduceReturnOp>(loc, c->getResult(0));
+  triton::ReduceReturnOp::create(builder, loc, c->getResult(0));
   // Callers keep emitting after the reduce, so restore that insertion point.
   builder.setInsertionPointAfter(reduce);
   return reduce->getResult(0);
@@ -685,7 +685,7 @@ Value buildReduceFromKind(OpBuilder &builder, Location loc, Value src,
   state.addTypes(elemTy);
   state.addAttributes(kind->getAttrs());
   Operation *c = builder.create(state);
-  builder.create<triton::ReduceReturnOp>(loc, c->getResult(0));
+  triton::ReduceReturnOp::create(builder, loc, c->getResult(0));
   builder.setInsertionPointAfter(reduce);
   return reduce->getResult(0);
 }
@@ -1048,7 +1048,7 @@ struct Packer {
       // Scalar-lane -> tensor-lane: widen the packed source.
       packedValue = widenPacked(builder, loc, pvs[0].value, resultTy);
     } else if (auto expand = dyn_cast<triton::ExpandDimsOp>(op)) {
-      packedValue = builder.create<triton::ExpandDimsOp>(
+      packedValue = triton::ExpandDimsOp::create(builder,
           loc, resultTy, pvs[0].value, expand.getAxis() + 1);
     } else if (auto trans = dyn_cast<triton::TransOp>(op)) {
       // The lane axis is inserted at 0, so every transposed axis shifts by one.
@@ -1330,7 +1330,7 @@ LogicalResult rewriteLaneVectorizeLoop(scf::ForOp forOp,
     newInitArgs.push_back(initArgs[j]);
   }
 
-  auto newFor = builder.create<scf::ForOp>(loc, forOp.getLowerBound(),
+  auto newFor = scf::ForOp::create(builder, loc, forOp.getLowerBound(),
                                            forOp.getUpperBound(),
                                            forOp.getStep(), newInitArgs);
   newFor->setAttrs(forOp->getAttrs());
@@ -1369,7 +1369,7 @@ LogicalResult rewriteLaneVectorizeLoop(scf::ForOp forOp,
       return fail();
     newYieldOperands.push_back(pv->value);
   }
-  builder.create<scf::YieldOp>(loc, newYieldOperands);
+  scf::YieldOp::create(builder, loc, newYieldOperands);
 
   builder.setInsertionPointAfter(newFor);
   SmallVector<Value> unpacked =

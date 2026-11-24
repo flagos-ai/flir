@@ -11,6 +11,8 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/Config/llvm-config.h"
+
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir {
@@ -84,6 +86,16 @@ public:
                                ArrayRef<const UseInfo *> results) override;
 
   void visitBranchOperand(OpOperand &operand) override { return; }
+
+#if LLVM_VERSION_MAJOR >= 23
+  // Region arguments that are not forwarded by control flow (for example loop
+  // induction variables) are conservatively treated as live on exit.
+  void visitNonControlFlowArguments(RegionSuccessor &successor,
+                                    ArrayRef<BlockArgument> arguments) override {
+    for (BlockArgument arg : arguments)
+      setToExitState(getLatticeElement(arg));
+  }
+#endif
 
   void visitCallOperand(OpOperand &operand) override { return; }
 

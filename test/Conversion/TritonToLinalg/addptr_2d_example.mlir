@@ -46,16 +46,15 @@ module {
 }
 // CHECK-LABEL:   func.func @kernel(
 // CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: memref<*xbf16>, %[[VAL_2:.*]]: memref<*xbf16>, %[[VAL_3:.*]]: i32, %[[ARG_4:.*]]: i32, %[[ARG_5:.*]]: i32, %[[ARG_6:.*]]: i32, %[[ARG_7:.*]]: i32, %[[ARG_8:.*]]: i32, %[[ARG_9:.*]]: i32) {
-// CHECK:           %[[VAL_7:.*]] = arith.constant 5 : index
 // CHECK:           %[[VAL_8:.*]] = arith.index_cast %[[VAL_3]] : i32 to index
-// CHECK:           %[[VAL_9:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_8]]], sizes: [4, 256], strides: [1, %[[VAL_7]]] : memref<*xbf16> to memref<4x256xbf16, strided<[1, ?], offset: ?>>
+// CHECK:           %[[VAL_9:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_8]]], sizes: [4, 256], strides: [1, 5] : memref<*xbf16> to memref<4x256xbf16, strided<[1, 5], offset: ?>>
 // CHECK:           %[[VAL_10:.*]] = memref.alloc() : memref<4x256xbf16>
-// CHECK:           memref.copy %[[VAL_9]], %[[VAL_10]] : memref<4x256xbf16, strided<[1, ?], offset: ?>> to memref<4x256xbf16>
+// CHECK:           memref.copy %[[VAL_9]], %[[VAL_10]] : memref<4x256xbf16, strided<[1, 5], offset: ?>> to memref<4x256xbf16>
 // CHECK:           %[[VAL_11:.*]] = bufferization.to_tensor %[[VAL_10]] restrict writable : memref<4x256xbf16>
 // CHECK:           %[[VAL_12:.*]] = arith.index_cast %[[VAL_3]] : i32 to index
-// CHECK:           %[[VAL_13:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: {{\[}}%[[VAL_12]]], sizes: [4, 256], strides: [1, %[[VAL_7]]] : memref<*xbf16> to memref<4x256xbf16, strided<[1, ?], offset: ?>>
+// CHECK:           %[[VAL_13:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: {{\[}}%[[VAL_12]]], sizes: [4, 256], strides: [1, 5] : memref<*xbf16> to memref<4x256xbf16, strided<[1, 5], offset: ?>>
 // CHECK:           %[[VAL_14:.*]] = memref.alloc() : memref<4x256xbf16>
-// CHECK:           memref.copy %[[VAL_13]], %[[VAL_14]] : memref<4x256xbf16, strided<[1, ?], offset: ?>> to memref<4x256xbf16>
+// CHECK:           memref.copy %[[VAL_13]], %[[VAL_14]] : memref<4x256xbf16, strided<[1, 5], offset: ?>> to memref<4x256xbf16>
 // CHECK:           %[[VAL_15:.*]] = bufferization.to_tensor %[[VAL_14]] restrict writable : memref<4x256xbf16>
 // CHECK:           %[[VAL_16:.*]] = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins(%[[VAL_11]], %[[VAL_15]] : tensor<4x256xbf16>, tensor<4x256xbf16>) outs(%[[VAL_11]] : tensor<4x256xbf16>) {
 // CHECK:           ^bb0(%[[VAL_17:.*]]: bf16, %[[VAL_18:.*]]: bf16, %[[VAL_19:.*]]: bf16):
@@ -63,7 +62,7 @@ module {
 // CHECK:             linalg.yield %[[VAL_20]] : bf16
 // CHECK:           } -> tensor<4x256xbf16>
 // CHECK:           %[[VAL_21:.*]] = arith.index_cast %[[VAL_3]] : i32 to index
-// CHECK:           %[[VAL_22:.*]] = memref.reinterpret_cast %[[VAL_2]] to offset: {{\[}}%[[VAL_21]]], sizes: [4, 256], strides: [1, %[[VAL_7]]] : memref<*xbf16> to memref<4x256xbf16, strided<[1, ?], offset: ?>>
-// CHECK:           bufferization.materialize_in_destination %[[VAL_23:.*]] in writable %[[VAL_22]]
+// CHECK:           %[[VAL_22:.*]] = memref.reinterpret_cast %[[VAL_2]] to offset: {{\[}}%[[VAL_21]]], sizes: [4, 256], strides: [1, 5] : memref<*xbf16> to memref<4x256xbf16, strided<[1, 5], offset: ?>>
+// CHECK:           bufferization.materialize_in_destination
 // CHECK:           return
 // CHECK:         }

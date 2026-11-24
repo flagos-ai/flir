@@ -40,11 +40,10 @@ module {
 }
 // CHECK-LABEL:   func.func @kernel(
 // CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: memref<256x16xbf16>, %[[VAL_2:.*]]: i32, %[[VAL_3:.*]]: i32, %[[VAL_4:.*]]: i32) {
-// CHECK-DAG:           %[[VAL_5:.*]] = arith.constant 256 : index
 // CHECK-DAG:           %[[VAL_6:.*]] = arith.constant 0xFF80 : bf16
-// CHECK:           %[[VAL_7:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: [0], sizes: [32, 256, 16], strides: {{\[}}%[[VAL_5]], 1, 1] : memref<*xbf16> to memref<32x256x16xbf16, strided<[?, 1, 1]>>
+// CHECK:           %[[VAL_7:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: [0], sizes: [32, 256, 16], strides: {{\[}}256, 1, 1] : memref<*xbf16> to memref<32x256x16xbf16, strided<[256, 1, 1]>>
 // CHECK:           %[[VAL_8:.*]] = memref.alloc() : memref<32x256x16xbf16>
-// CHECK:           memref.copy %[[VAL_7]], %[[VAL_8]] : memref<32x256x16xbf16, strided<[?, 1, 1]>> to memref<32x256x16xbf16>
+// CHECK:           memref.copy %[[VAL_7]], %[[VAL_8]] : memref<32x256x16xbf16, strided<[256, 1, 1]>> to memref<32x256x16xbf16>
 // CHECK:           %[[VAL_9:.*]] = bufferization.to_tensor %[[VAL_8]] restrict writable : memref<32x256x16xbf16>
 // CHECK:           %[[VAL_10:.*]] = tensor.empty() : tensor<256x16xbf16>
 // CHECK:           %[[VAL_11:.*]] = linalg.fill ins(%[[VAL_6]] : bf16) outs(%[[VAL_10]] : tensor<256x16xbf16>) -> tensor<256x16xbf16>
@@ -53,6 +52,6 @@ module {
 // CHECK:               %[[VAL_15:.*]] = arith.maximumf %[[VAL_13]], %[[VAL_14]] : bf16
 // CHECK:               linalg.yield %[[VAL_15]] : bf16
 // CHECK:             }
-// CHECK:           bufferization.materialize_in_destination %[[VAL_12]] in writable %[[VAL_1]]
+// CHECK:           bufferization.materialize_in_destination
 // CHECK:           return
 // CHECK:         }

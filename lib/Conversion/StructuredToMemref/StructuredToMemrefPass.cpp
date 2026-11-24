@@ -88,11 +88,10 @@ public:
       auto reinterpretCast =
           inputs[0].getDefiningOp<memref::ReinterpretCastOp>();
       if (!reinterpretCast) {
-        return builder
-            .create<UnrealizedConversionCastOp>(loc, memrefType, inputs)
+        return UnrealizedConversionCastOp::create(builder, loc, memrefType, inputs)
             .getResult(0);
       }
-      return builder.create<memref::ReinterpretCastOp>(
+      return memref::ReinterpretCastOp::create(builder,
           loc, memrefType, inputs[0], reinterpretCast.getMixedOffsets()[0],
           reinterpretCast.getMixedSizes(), reinterpretCast.getMixedStrides());
     });
@@ -100,7 +99,7 @@ public:
     addSourceMaterialization([&](OpBuilder &builder, Type resultType,
                                  ValueRange inputs,
                                  Location loc) -> Value {
-      return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+      return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
           .getResult(0);
     });
 
@@ -108,7 +107,7 @@ public:
     addArgumentMaterialization([&](OpBuilder &builder, Type resultType,
                                    ValueRange inputs,
                                    Location loc) -> Value {
-      return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+      return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
           .getResult(0);
     });
 #endif
@@ -126,7 +125,7 @@ public:
                                  UnrankedMemRefType resultType,
                                  ValueRange inputs,
                                  Location loc) -> Value {
-      return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+      return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
           .getResult(0);
     });
   }

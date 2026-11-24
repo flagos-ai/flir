@@ -49,7 +49,7 @@ module {
 // CHECK-DAG:       [[VAR_4_:%.+]] = arith.index_cast [[PARAM_4_]] : i32 to index
 // CHECK:           [[VAR_5_:%.+]] = arith.minsi [[VAR_4_]], [[CST_128_]] : index
 // CHECK:           [[VAR_6_:%.+]] = arith.maxsi [[VAR_5_]], [[CST_0_1_]] : index
-// CHECK:           [[VAR_7_:%.+]] = "tts.load"([[VAR_3_]], [[VAR_6_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 1, 1>, static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<128x!tt.ptr<f32>>, index, f32) -> tensor<128xf32>
+// CHECK:           [[VAR_7_:%.+]] = "tts.load"([[VAR_3_]], [[VAR_6_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 1, 0, 1>, static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<128x!tt.ptr<f32>>, index, f32) -> tensor<128xf32>
 // CHECK:           [[VAR_8_:%.+]] = "tt.reduce"([[VAR_7_]]) <{axis = 0 : i32}> ({
 // CHECK:           ^bb0([[IN_0_:%.+]]: f32, [[IN_1_:%.+]]: f32):
 // CHECK:             [[VAR_21_:%.+]] = arith.cmpf ogt, [[IN_0_]], [[IN_1_]] : f32
@@ -72,6 +72,6 @@ module {
 // CHECK-DAG:       [[VAR_18_:%.+]] = arith.index_cast [[PARAM_4_]] : i32 to index
 // CHECK:           [[VAR_19_:%.+]] = arith.minsi [[VAR_18_]], [[CST_128_]] : index
 // CHECK:           [[VAR_20_:%.+]] = arith.maxsi [[VAR_19_]], [[CST_0_1_]] : index
-// CHECK:           "tts.store"([[VAR_17_]], [[VAR_14_]], [[VAR_20_]]) <{static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<128x!tt.ptr<f32>>, tensor<128xf32>, index) -> ()
+// CHECK:           "tts.store"([[VAR_17_]], [[VAR_14_]], [[VAR_20_]]) <{{.*}}static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<128x!tt.ptr<f32>>, tensor<128xf32>, index) -> ()
 // CHECK:           tt.return
 // CHECK:         }

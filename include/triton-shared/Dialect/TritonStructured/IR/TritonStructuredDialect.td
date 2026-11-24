@@ -251,10 +251,10 @@ def TTS_GetStructuredStateOp : TTS_Op<"get_structured_state", [AttrSizedResultSe
   let description = "Used to pass the offsets and strides to scf.for op to simplify IR rewrites.";
 
   let arguments = (
-    ins AnyTypeOf<[TT_PtrLike, I1Tensor, I16Tensor, I32Tensor, I64Tensor]>:$input
+    ins AnyTypeOf<[TT_PtrLike, I1Tensor, I8Tensor, I16Tensor, I32Tensor, I64Tensor]>:$input
   );
   let results = (
-    outs AnyTypeOf<[TT_PtrLike, I1Tensor, I16Tensor, I32Tensor, I64Tensor]>:$structured,
+    outs AnyTypeOf<[TT_PtrLike, I1Tensor, I8Tensor, I16Tensor, I32Tensor, I64Tensor]>:$structured,
     Variadic<Index>:$offsets,
     Variadic<Index>:$strides
   );
@@ -329,12 +329,15 @@ def TTS_LoadOp : TTS_Op<"load", [
   let arguments = (ins TT_PtrLike:$ptr,
                        Variadic<Index>:$mask_dims,
                        DenseI64ArrayAttr:$static_mask_dims,
+                       Variadic<Index>:$mask_offsets,
+                       DenseI64ArrayAttr:$static_mask_offsets,
                        Optional<AnyTypeOf<[TT_Float, TT_Int, TT_Ptr]>>:$other);
 
   let results = (outs TT_Tensor:$result);
 
   let builders = [
-    OpBuilder<(ins "Value":$ptr, "ArrayRef<OpFoldResult>":$mask_dims, "Value":$other)>,
+    OpBuilder<(ins "Value":$ptr, "ArrayRef<OpFoldResult>":$mask_dims,
+                   "ArrayRef<OpFoldResult>":$mask_offsets, "Value":$other)>,
   ];
 
   let extraClassDeclaration = [{
@@ -342,6 +345,14 @@ def TTS_LoadOp : TTS_Op<"load", [
     SmallVector<OpFoldResult> getMixedMaskDims() {
       Builder b(getContext());
       return ::mlir::getMixedValues(getStaticMaskDims(), getMaskDims(), b);
+    }
+
+    /// Return a vector of all the static or dynamic mask offsets (per-dim
+    /// start of the valid interval), always parallel to mask dims: missing
+    /// entries are padded with 0 (prefix interval).
+    SmallVector<OpFoldResult> getMixedMaskOffsets() {
+      Builder b(getContext());
+      return ::mlir::getMixedValues(getStaticMaskOffsets(), getMaskOffsets(), b);
     }
 
     bool hasMask() {
@@ -355,17 +366,22 @@ def TTS_LoadOp : TTS_Op<"load", [
 }
 
 def TTS_StoreOp : TTS_Op<"store", [
-  MemoryEffects<[MemWrite]>
+  MemoryEffects<[MemWrite]>,
+  AttrSizedOperandSegments
 ]> {
   let summary = "optionally store data from in memory to fill a portion of the tensor";
 
   let arguments = (ins TT_PtrLike:$ptr,
                        TT_Tensor:$value,
                        Variadic<Index>:$mask_dims,
-                       DenseI64ArrayAttr:$static_mask_dims);
+                       DenseI64ArrayAttr:$static_mask_dims,
+                       Variadic<Index>:$mask_offsets,
+                       DenseI64ArrayAttr:$static_mask_offsets);
 
   let builders = [
-    OpBuilder<(ins "Value":$ptr, "Value":$value, "ArrayRef<OpFoldResult>":$dims)>,
+    OpBuilder<(ins "Value":$ptr, "Value":$value,
+                   "ArrayRef<OpFoldResult>":$dims,
+                   "ArrayRef<OpFoldResult>":$offsets)>,
   ];
 
   let extraClassDeclaration = [{
@@ -373,6 +389,14 @@ def TTS_StoreOp : TTS_Op<"store", [
     SmallVector<OpFoldResult> getMixedMaskDims() {
       Builder b(getContext());
       return ::mlir::getMixedValues(getStaticMaskDims(), getMaskDims(), b);
+    }
+
+    /// Return a vector of all the static or dynamic mask offsets (per-dim
+    /// start of the valid interval), always parallel to mask dims: missing
+    /// entries are padded with 0 (prefix interval).
+    SmallVector<OpFoldResult> getMixedMaskOffsets() {
+      Builder b(getContext());
+      return ::mlir::getMixedValues(getStaticMaskOffsets(), getMaskOffsets(), b);
     }
 
     bool hasMask() {
@@ -386,7 +410,8 @@ def TTS_StoreOp : TTS_Op<"store", [
 }
 
 def TTS_AtomicRMWOp : TTS_Op<"atomic_rmw", [
-  MemoryEffects<[MemRead, MemWrite]>
+  MemoryEffects<[MemRead, MemWrite]>,
+  AttrSizedOperandSegments
 ]> {
   let summary = "perform atomic read-modify-write operation on a pointer";
 
@@ -394,6 +419,8 @@ def TTS_AtomicRMWOp : TTS_Op<"atomic_rmw", [
                        TT_Tensor:$value,
                        Variadic<Index>:$mask_dims,
                        DenseI64ArrayAttr:$static_mask_dims,
+                       Variadic<Index>:$mask_offsets,
+                       DenseI64ArrayAttr:$static_mask_offsets,
                        TT_AtomicRMWAttr:$atomic_rmw_op,
                        TT_MemSemanticAttr:$sem,
                        TT_MemSyncScopeAttr:$scope);
@@ -403,6 +430,7 @@ def TTS_AtomicRMWOp : TTS_Op<"atomic_rmw", [
   let builders = [
     OpBuilder<(ins "mlir::Type":$result, "Value":$ptr, "Value":$value,
                 "ArrayRef<OpFoldResult>":$dims,
+                "ArrayRef<OpFoldResult>":$offsets,
                 "triton::RMWOpAttr":$atomic_rmw_op,
                 "triton::MemSemanticAttr":$sem, "triton::MemSyncScopeAttr":$scope)>,
   ];
@@ -412,6 +440,14 @@ def TTS_AtomicRMWOp : TTS_Op<"atomic_rmw", [
     SmallVector<OpFoldResult> getMixedMaskDims() {
       Builder b(getContext());
       return ::mlir::getMixedValues(getStaticMaskDims(), getMaskDims(), b);
+    }
+
+    /// Return a vector of all the static or dynamic mask offsets (per-dim
+    /// start of the valid interval), always parallel to mask dims: missing
+    /// entries are padded with 0 (prefix interval).
+    SmallVector<OpFoldResult> getMixedMaskOffsets() {
+      Builder b(getContext());
+      return ::mlir::getMixedValues(getStaticMaskOffsets(), getMaskOffsets(), b);
     }
 
     bool hasMask() {

@@ -42,9 +42,9 @@ module {
 // CHECK:             [[VAR_4_:%.+]] = arith.minsi [[VAR_2_]], [[VAR_3_]] : index
 // CHECK:             [[VAR_5_:%.+]] = arith.maxsi [[VAR_4_]], [[VAR_arg4_]] : index
 // CHECK:             [[VAR_6_:%.+]] = arith.subi [[VAR_5_]], [[VAR_arg4_]] : index
-// CHECK-DAG:         [[VAR_7_:%.+]] = "tts.load"([[VAR_1_]], [[VAR_6_]], [[CST_minus_1_dot_100000_]]) <{operandSegmentSizes = array<i32: 1, 1, 1>, static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<4x!tt.ptr<f32>>, index, f32) -> tensor<4xf32>
+// CHECK-DAG:         [[VAR_7_:%.+]] = "tts.load"([[VAR_1_]], [[VAR_6_]], [[CST_minus_1_dot_100000_]]) <{operandSegmentSizes = array<i32: 1, 1, 0, 1>, static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<4x!tt.ptr<f32>>, index, f32) -> tensor<4xf32>
 // CHECK-DAG:         [[VAR_8_:%.+]] = tts.make_tptr [[PARAM_1_]] to sizes: [4], strides: {{.}}[[CST_1_1_]]{{.}}, offsets: {{.}}[[VAR_arg5_]]{{.}}, shape: [0], order: [] : <f32> to tensor<4x!tt.ptr<f32>>
-// CHECK:             "tts.store"([[VAR_8_]], [[VAR_7_]]) <{static_mask_dims = array<i64>}> : (tensor<4x!tt.ptr<f32>>, tensor<4xf32>) -> ()
+// CHECK:             "tts.store"([[VAR_8_]], [[VAR_7_]]) <{{.*}}static_mask_dims = array<i64>{{.*}} : (tensor<4x!tt.ptr<f32>>, tensor<4xf32>) -> ()
 // CHECK:             [[VAR_9_:%.+]] = arith.addi [[VAR_arg5_]], [[CST_4_]] : index
 // CHECK:             scf.yield [[VAR_2_]], [[VAR_9_]] : index, index
 // CHECK:           }
