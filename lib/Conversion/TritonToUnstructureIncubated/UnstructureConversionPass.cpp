@@ -31,6 +31,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
@@ -243,7 +244,7 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     MemAccOpTy op, PatternRewriter &rewriter) const {
   auto loc = op.getLoc();
 
-  auto ptr = op.getPtr();
+  Value ptr = op.getPtr();
   auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
   auto isDiscreteMask = op->hasAttr("is_discrete_mask");
 
@@ -262,6 +263,60 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
 
   if (checkUnstructureAnnotated(op, rewriter))
     ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
+
+  if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
+    Value base = ptrOffsetInfo.getPtr();
+    if (isa<RankedTensorType>(ptr.getType()) && ptrType.getRank() == 1 &&
+        ptrType.getDimSize(0) == 1 &&
+        (op.getMask() || ptrOffsetInfo.isScalarLike()) &&
+        ptr.getDefiningOp<triton::AddPtrOp>() && base &&
+        isa<triton::PointerType>(base.getType())) {
+      Type elementType = cast<RankedTensorType>(op.getType()).getElementType();
+      Value mask = op.getMask();
+      Value other = op.getOther();
+      if (mask && !other && !elementType.isIntOrFloat())
+        return failure();
+
+      // Lower singleton indirect loads without asking the structured parser to
+      // interpret arbitrary tensor arithmetic as an address.
+      SmallVector<OpFoldResult> lane{rewriter.getIndexAttr(0)};
+      auto emitLoad = [&]() {
+        Value offset =
+            createExtractOp(loc, ptrOffsetInfo.getOffset(), rewriter, lane);
+        Value address = rewriter.create<triton::AddPtrOp>(loc, base.getType(),
+                                                          base, offset);
+        auto load = rewriter.create<triton::LoadOp>(
+            loc, address, op.getCache(), op.getEvict(), op.getIsVolatile(),
+            op.getFlagtreeHintsAttr());
+        load->setDiscardableAttrs(op->getDiscardableAttrDictionary());
+        load->setAttr(ConverterUtils::discreteAttrName, rewriter.getUnitAttr());
+        return load.getResult();
+      };
+
+      Value result;
+      if (mask) {
+        // The scalar load must remain inside the branch. Its address can be
+        // out of bounds when the original mask is false.
+        Value predicate = createExtractOp(loc, mask, rewriter, lane);
+        auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{elementType},
+                                               predicate, /*withElse=*/true);
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(ifOp.thenBlock());
+        rewriter.create<scf::YieldOp>(loc, emitLoad());
+        rewriter.setInsertionPointToStart(ifOp.elseBlock());
+        Value inactive =
+            other ? createExtractOp(loc, other, rewriter, lane)
+                  : rewriter.create<arith::ConstantOp>(
+                        loc, elementType, rewriter.getZeroAttr(elementType));
+        rewriter.create<scf::YieldOp>(loc, inactive);
+        result = ifOp.getResult(0);
+      } else {
+        result = emitLoad();
+      }
+      rewriter.replaceOpWithNewOp<triton::SplatOp>(op, op.getType(), result);
+      return success();
+    }
+  }
 
   if (ptrOffsetInfo.isStructured() && !isDiscreteMask &&
       (!ptrOffsetInfo.isScalarLike() ||
@@ -538,20 +593,51 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
       loc, srcPtr.getType(), srcPtr, extractedOffset);
 
   MemAccOpTy accessedOp;
-  if (fullyUnstructured) {
+  Value guardedLoadResult;
+  if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
+    if (fullyUnstructured && op.getMask()) {
+      Value mask = createExtractOp(loc, op.getMask(), rewriter, offsets);
+      Value other = createExtractOp(loc, op.getOther(), rewriter, offsets);
+      auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{resultElementType},
+                                             mask, /*withElse=*/true);
+      {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(ifOp.thenBlock());
+        auto load = rewriter.create<triton::LoadOp>(
+            loc, ptrToAccess, op.getCache(), op.getEvict(), op.getIsVolatile(),
+            op.getFlagtreeHintsAttr());
+        load->setAttr(ConverterUtils::discreteAttrName,
+                      rewriter.getUnitAttr());
+        rewriter.create<scf::YieldOp>(loc, load.getResult());
+        rewriter.setInsertionPointToStart(ifOp.elseBlock());
+        if (!other)
+          other = rewriter.create<arith::ConstantOp>(
+              loc, resultElementType, rewriter.getZeroAttr(resultElementType));
+        rewriter.create<scf::YieldOp>(loc, other);
+      }
+      guardedLoadResult = ifOp.getResult(0);
+    } else if (fullyUnstructured) {
+      accessedOp = createMemAccOp(op, ptrToAccess, loc, rewriter, offsets);
+    } else {
+      accessedOp =
+          createMemAccOp(op, ptrToAccess, loc, rewriter, offsets, sizes, strides);
+    }
+  } else if (fullyUnstructured) {
     accessedOp = createMemAccOp(op, ptrToAccess, loc, rewriter, offsets);
   } else {
     accessedOp =
         createMemAccOp(op, ptrToAccess, loc, rewriter, offsets, sizes, strides);
   }
 
-  accessedOp->setAttr(ConverterUtils::discreteAttrName,
-                      UnitAttr::get(rewriter.getContext()));
+  if (accessedOp)
+    accessedOp->setAttr(ConverterUtils::discreteAttrName,
+                        UnitAttr::get(rewriter.getContext()));
 
   if (isLoadLike) {
     assert(iterArg && "Load case must have iterArg in for loop");
 
-    Value value = accessedOp->getResult(0);
+    Value value = guardedLoadResult ? guardedLoadResult
+                                    : accessedOp->getResult(0);
     Value result;
     if (!isa<RankedTensorType>(value.getType()) &&
         (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp> ||

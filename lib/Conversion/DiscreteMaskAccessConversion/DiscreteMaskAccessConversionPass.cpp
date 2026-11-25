@@ -238,6 +238,12 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
     auto mask = op.getMask();
     auto ptr = op.getPtr();
 
+    // Keep indirect loads masked until address lowering. Reading a full tile
+    // and selecting afterwards can access an invalid address.
+    if (auto type = dyn_cast<RankedTensorType>(ptr.getType());
+        type && type.getRank() == 1 && ptr.getDefiningOp<triton::AddPtrOp>())
+      return failure();
+
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
