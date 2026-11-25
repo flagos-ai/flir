@@ -44,6 +44,14 @@ namespace LoadStoreConverter {
 using namespace mlir;
 using namespace triton;
 
+// Preserve the l2_cache_mode annotation when pointer canonicalization creates a
+// replacement pointer. The implementation intentionally lives in the .cpp so
+// this public header does not depend on the optional Annotation dialect header.
+LogicalResult preserveL2CacheModeAnnotation(Value originalPtr,
+                                            Value remappedPtr,
+                                            Operation *memoryOp,
+                                            PatternRewriter &rewriter);
+
 class AddPtrConverter : public OpConversionPattern<triton::AddPtrOp> {
 public:
   using OpConversionPattern<triton::AddPtrOp>::OpConversionPattern;
@@ -118,6 +126,9 @@ public:
           createScalarOrSplatConstant(rewriter, op.getLoc(), zeroTy, 0);
       Value addptrVal = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTy,
                                                           ptrVal, zeroVal);
+      if (failed(preserveL2CacheModeAnnotation(
+              ptrVal, addptrVal, op.getOperation(), rewriter)))
+        return failure();
       rewriter.modifyOpInPlace(
           op, [&]() { op->replaceUsesOfWith(ptrVal, addptrVal); });
       return success();

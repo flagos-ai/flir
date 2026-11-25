@@ -80,6 +80,61 @@ using namespace triton;
 using namespace Incubated;
 const std::string MayImplicitTransposeWithLastAxisTAG =
     "MayImplicitTransposeWithLastAxis";
+static constexpr StringLiteral L2CacheModeAttrName = "l2_cache_mode";
+
+static LogicalResult collectL2CacheMode(Value ptr, Operation *memoryOp,
+                                        Attribute &mode) {
+  if (auto load = dyn_cast<triton::LoadOp>(memoryOp)) {
+    if (load.getCache() == triton::CacheModifier::L2_DISABLE)
+      mode = IntegerAttr::get(IntegerType::get(memoryOp->getContext(), 32), 4);
+  } else if (auto store = dyn_cast<triton::StoreOp>(memoryOp)) {
+    if (store.getCache() == triton::CacheModifier::L2_DISABLE)
+      mode = IntegerAttr::get(IntegerType::get(memoryOp->getContext(), 32), 4);
+  }
+  if (!ptr)
+    return success();
+  for (Operation *user : ptr.getUsers()) {
+    auto mark = dyn_cast<annotation::MarkOp>(user);
+    if (!mark || !mark.isAnnotatedByStaticAttr(L2CacheModeAttrName))
+      continue;
+    Attribute candidate = mark.getStaticAttrValue(L2CacheModeAttrName);
+    if (!isa<IntegerAttr>(candidate))
+      return memoryOp->emitError("l2_cache_mode must be an integer attribute");
+    if (mode && cast<IntegerAttr>(mode).getValue() !=
+                    cast<IntegerAttr>(candidate).getValue())
+      return memoryOp->emitError("conflicting l2_cache_mode annotations");
+    if (!mode)
+      mode = candidate;
+  }
+  return success();
+}
+
+LogicalResult preserveL2CacheModeAnnotation(Value originalPtr, Value remappedPtr,
+                                            Operation *memoryOp,
+                                            PatternRewriter &rewriter) {
+  Attribute mode;
+  if (failed(collectL2CacheMode(originalPtr, memoryOp, mode)) ||
+      (remappedPtr != originalPtr &&
+       failed(collectL2CacheMode(remappedPtr, memoryOp, mode))))
+    return failure();
+  if (!mode || originalPtr == remappedPtr)
+    return success();
+
+  for (Operation *user : llvm::make_early_inc_range(originalPtr.getUsers())) {
+    auto mark = dyn_cast<annotation::MarkOp>(user);
+    if (!mark || !mark.isAnnotatedByStaticAttr(L2CacheModeAttrName))
+      continue;
+    rewriter.modifyOpInPlace(mark, [&] {
+      mark->replaceUsesOfWith(originalPtr, remappedPtr);
+    });
+  }
+  return success();
+}
+
+static void setL2CacheMode(Operation *op, Attribute mode) {
+  if (op && mode)
+    op->setAttr(L2CacheModeAttrName, mode);
+}
 
 LogicalResult
 AddPtrConverter::matchAndRewrite(triton::AddPtrOp op, OpAdaptor adaptor,
@@ -165,6 +220,11 @@ LogicalResult LoadConverter::continueModifyFromAddPtrConverter(
       rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
   Value loadVal =
       rewriter.create<memref::LoadOp>(loc, castVal, ValueRange{idxZero});
+  Attribute l2CacheMode;
+  if (failed(preserveL2CacheModeAnnotation(op.getPtr(), ptr, op, rewriter)) ||
+      failed(collectL2CacheMode(op.getPtr(), op, l2CacheMode)))
+    return failure();
+  setL2CacheMode(loadVal.getDefiningOp(), l2CacheMode);
   propagateWasBoolToInt8Attr(op.getOperation(), loadVal.getDefiningOp(),
                              rewriter);
   Value insertedVal =
@@ -242,6 +302,12 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
   }
 
   auto ptr = adaptor.getPtr();
+  Attribute l2CacheMode;
+  if (failed(collectL2CacheMode(op.getPtr(), op, l2CacheMode)) ||
+      (ptr != op.getPtr() && failed(collectL2CacheMode(ptr, op, l2CacheMode))))
+    return failure();
+  if (failed(preserveL2CacheModeAnnotation(op.getPtr(), ptr, op, rewriter)))
+    return failure();
   auto mask = op.getMask();
   auto other = op.getOther();
   auto loc = op.getLoc();
@@ -257,6 +323,7 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
                            .create<memref::LoadOp>(loc, resTy, scalarMemref,
                                                    idxZero.getResult())
                            .getResult();
+    setL2CacheMode(loadedValue.getDefiningOp(), l2CacheMode);
     propagateWasBoolToInt8Attr(op.getOperation(), loadedValue.getDefiningOp(),
                                rewriter);
     if (mask && other) {
@@ -425,7 +492,10 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
         ptr, srcOffsets, boundarySizes, loc, rewriter);
     auto dstSubview = mlir::ConverterUtils::makeSubViewOp(
         allocOp, dstOffsets, boundarySizes, loc, rewriter);
+    setL2CacheMode(srcSubView.getOperation(), l2CacheMode);
+    setL2CacheMode(dstSubview.getOperation(), l2CacheMode);
     auto copyOp = rewriter.create<memref::CopyOp>(loc, srcSubView, dstSubview);
+    setL2CacheMode(copyOp, l2CacheMode);
     propagateWasBoolToInt8Attr(op.getOperation(), copyOp.getOperation(),
                                rewriter);
     if (mayImplicitTransposeWithLastAxis) {
@@ -453,12 +523,14 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
 #else // triton_v3.3.x
       auto [ptrStrides, ptrOffsets] = memRefType.getStridesAndOffset();
 #endif
-      if (ptrStrides.back() == 2 && (memRefShape.back() % 2 == 0) &&
+      if (!l2CacheMode && ptrStrides.back() == 2 &&
+          (memRefShape.back() % 2 == 0) &&
           mlir::triton::DeinterleaveStatusOptimization(op, adaptor, rewriter)
               .succeeded()) {
         return success();
       }
       auto copyOp = rewriter.create<memref::CopyOp>(loc, ptr, allocOp);
+      setL2CacheMode(copyOp, l2CacheMode);
       propagateWasBoolToInt8Attr(op.getOperation(), copyOp.getOperation(),
                                  rewriter);
       if (mayImplicitTransposeWithLastAxis &&
@@ -511,7 +583,8 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
 #else // triton_v3.3.x
     auto [ptrStrides, ptrOffsets] = memRefType.getStridesAndOffset();
 #endif
-    if (ptrStrides.back() == 2 && (memRefType.getShape().back() % 2 == 0) &&
+    if (!l2CacheMode && ptrStrides.back() == 2 &&
+        (memRefType.getShape().back() % 2 == 0) &&
         DeinterleaveStatusWithMaskOptimization(op, adaptor, rewriter, mstate,
                                                allocOp)
             .succeeded()) {
@@ -541,6 +614,8 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
                                      rewriter.getContext()));
       auto castOp = rewriter.create<memref::CastOp>(loc, castType, dstSubView);
       auto copyOp = rewriter.create<memref::CopyOp>(loc, srcSubView, castOp);
+      setL2CacheMode(srcSubView.getOperation(), l2CacheMode);
+      setL2CacheMode(copyOp, l2CacheMode);
       propagateWasBoolToInt8Attr(op.getOperation(), copyOp.getOperation(),
                                  rewriter);
     }
@@ -1134,6 +1209,11 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   auto mask = op.getMask();
   auto loc = op.getLoc();
   auto ptr = adaptor.getPtr();
+  Attribute l2CacheMode;
+  if (failed(collectL2CacheMode(op.getPtr(), op, l2CacheMode)) ||
+      (ptr != op.getPtr() && failed(collectL2CacheMode(ptr, op, l2CacheMode))) ||
+      failed(preserveL2CacheModeAnnotation(op.getPtr(), ptr, op, rewriter)))
+    return failure();
   auto val = adaptor.getValue();
 
   // 1. boundary size check
@@ -1177,9 +1257,11 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
         val, srcOffsets, boundarySizes, loc, rewriter);
     auto dstSubview = mlir::ConverterUtils::makeSubViewOp(
         ptr, dstOffsets, boundarySizes, loc, rewriter);
+    setL2CacheMode(dstSubview.getOperation(), l2CacheMode);
     auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
         loc, srcSlice, dstSubview);
     storeOp.setWritable(true);
+    setL2CacheMode(storeOp, l2CacheMode);
     rewriter.eraseOp(op);
     return success();
   }
@@ -1189,6 +1271,7 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
     auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
         loc, val, ptr);
     storeOp.setWritable(true);
+    setL2CacheMode(storeOp, l2CacheMode);
     rewriter.eraseOp(op);
     return success();
   }
@@ -1205,9 +1288,11 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   LLVM_DEBUG({ llvm::dbgs() << *getModuleOpFromOperation(op) << "\n"; });
   auto srcSlice = mstate.getExtractSlice(val, loc, rewriter);
   auto dstSubview = mstate.getSubview(ptr, loc, rewriter);
+  setL2CacheMode(dstSubview.getOperation(), l2CacheMode);
   auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
       loc, srcSlice, dstSubview);
   storeOp.setWritable(true);
+  setL2CacheMode(storeOp, l2CacheMode);
   rewriter.eraseOp(op);
   return success();
 }
