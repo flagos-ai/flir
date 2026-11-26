@@ -28,6 +28,7 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -2014,12 +2015,57 @@ GatherConverter::matchAndRewrite(triton::GatherOp op, OpAdaptor adaptor,
   return success();
 }
 
+static bool shouldMaterializeSplit(triton::SplitOp op, Value input,
+                                   RankedTensorType inputType) {
+  auto target =
+      op->getParentOfType<ModuleOp>()->getAttrOfType<hacc::TargetAttr>(
+          "hacc.target");
+  if (compileOn91095Flag || !target ||
+      !target.getTarget().getValue().starts_with("Ascend910B") ||
+      inputType.getRank() != 2 || !inputType.hasStaticShape() ||
+      inputType.getEncoding() || !inputType.getElementType().isF32())
+    return false;
+
+  // Only use deinterleave for aligned channel buffers and at most a 32 KiB
+  // input tile. The existing slice lowering also serves dense load folding.
+  const int64_t pairs = inputType.getDimSize(0);
+  if (inputType.getDimSize(1) != 2 || pairs < 8 || pairs % 8 != 0 ||
+      pairs > 4096)
+    return false;
+
+  if (auto reshape = input.getDefiningOp<tensor::ReshapeOp>())
+    input = reshape.getSource();
+  else if (auto reshape = input.getDefiningOp<triton::ReshapeOp>())
+    input = reshape.getSrc();
+  return input.getDefiningOp<arith::AddFOp>() != nullptr;
+}
+
 LogicalResult
 SplitConverter::matchAndRewrite(triton::SplitOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const {
   Value input = op.getSrc();
   auto loc = op.getLoc();
   auto inputType = cast<RankedTensorType>(input.getType());
+  auto outType = cast<RankedTensorType>(op.getOutLHS().getType());
+
+  if (shouldMaterializeSplit(op, input, inputType)) {
+    // A slice of reshaped computed data leaves the channel stride tied to the
+    // interleaved view. Extract each channel from the flat input into its own
+    // compact tensor so later consumers can align the two layouts separately.
+    auto flatType = RankedTensorType::get({inputType.getNumElements()},
+                                          inputType.getElementType());
+    const SmallVector<ReassociationIndices> axes{{0, 1}};
+    Value flat =
+        rewriter.create<tensor::CollapseShapeOp>(loc, flatType, input, axes);
+    SmallVector<Value, 2> channels;
+    for (int64_t channel = 0; channel < 2; ++channel) {
+      auto deinterleave = rewriter.create<hfusion::DeinterleaveOp>(
+          loc, TypeRange{outType}, flat, rewriter.getI64IntegerAttr(channel));
+      channels.push_back(deinterleave->getResult(0));
+    }
+    rewriter.replaceOp(op, channels);
+    return success();
+  }
 
   int64_t rank = inputType.getRank();
   SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
@@ -2027,7 +2073,6 @@ SplitConverter::matchAndRewrite(triton::SplitOp op, OpAdaptor adaptor,
   SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
   strides.back() = rewriter.getIndexAttr(2);
 
-  auto outType = dyn_cast<RankedTensorType>(op.getOutLHS().getType());
   auto sizes = llvm::map_to_vector(outType.getShape(), [&](int64_t t) {
     return OpFoldResult(rewriter.getIndexAttr(t));
   });
