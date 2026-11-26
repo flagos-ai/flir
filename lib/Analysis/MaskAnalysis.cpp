@@ -18,6 +18,7 @@
 
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
@@ -27,6 +28,26 @@
 namespace mlir {
 
 namespace triton {
+
+// Return the offset (interval lower bound) of dim i, defaulting to a static 0
+// when the state does not carry offsets for that dim (prefix interval).
+static OpFoldResult getDimOffset(const MaskState &state, int64_t i,
+                                 OpBuilder &builder) {
+  if (i < static_cast<int64_t>(state.offsets.size()) && state.offsets[i])
+    return state.offsets[i];
+  return builder.getIndexAttr(0);
+}
+
+// An empty interval must be represented as offset 0: a subview [lo, 0) with
+// lo == tensor dim is rejected by the memref.subview verifier.
+static OpFoldResult canonicalizeEmptyInterval(OpFoldResult dim,
+                                              OpFoldResult lo,
+                                              OpBuilder &builder) {
+  auto dimAttr = getIntAttr(dim);
+  if (dimAttr && dimAttr.value() == 0)
+    return builder.getIndexAttr(0);
+  return lo;
+}
 ///////////ascend
 void dimInfo::dump() const {
     LLVM_DEBUG({
@@ -50,11 +71,11 @@ static Value structuredMaskToUnstructuredMask(OpBuilder &builder, Location loc,
 
   auto i32TensorType = RankedTensorType::get({size}, builder.getI32Type());
   Value range =
-      builder.create<triton::MakeRangeOp>(loc, i32TensorType, 0, size);
-  Value v = builder.create<arith::ConstantIndexOp>(loc, maskDim);
-  v = builder.create<arith::IndexCastUIOp>(loc, builder.getI32Type(), v);
-  v = builder.create<triton::SplatOp>(loc, i32TensorType, v).getResult();
-  return builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, range,
+      triton::MakeRangeOp::create(builder, loc, i32TensorType, 0, size);
+  Value v = arith::ConstantIndexOp::create(builder, loc, maskDim);
+  v = arith::IndexCastUIOp::create(builder, loc, builder.getI32Type(), v);
+  v = triton::SplatOp::create(builder, loc, i32TensorType, v).getResult();
+  return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ult, range,
                                        v);
 };
 
@@ -103,6 +124,7 @@ LogicalResult MaskState::parse(Value operand, const Location loc,
         cast<RankedTensorType>(resultType).getRank() == 1) {
       assert(isEmpty());
       dims.push_back(operand);
+      offsets.push_back(builder.getIndexAttr(0));
       nonContinuousDim.push_back(0);
       return success();
     }
@@ -114,26 +136,36 @@ tensor::ExtractSliceOp MaskState::getExtractSlice(Value source,
                                                   const Location loc,
                                                   OpBuilder &builder) const {
   auto sourceType = cast<RankedTensorType>(source.getType());
-  SmallVector<OpFoldResult> offsets(getRank(), builder.getIndexAttr(0));
+  SmallVector<OpFoldResult> sliceOffsets;
+  for (size_t i = 0; i < getRank(); ++i)
+    sliceOffsets.push_back(getDimOffset(*this, i, builder));
   SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
 
-  auto dstType = tensor::ExtractSliceOp::inferResultType(sourceType, offsets,
-                                                         dims, strides);
+  // LLVM 23 dropped the offsets/strides arguments of inferResultType.
+#if LLVM_VERSION_MAJOR >= 23
+  auto dstType = tensor::ExtractSliceOp::inferResultType(sourceType, dims);
+#else
+  auto dstType =
+      tensor::ExtractSliceOp::inferResultType(sourceType, sliceOffsets, dims,
+                                              strides);
+#endif
 
-  return builder.create<tensor::ExtractSliceOp>(loc, dstType, source, offsets,
-                                                dims, strides);
+  return tensor::ExtractSliceOp::create(builder, loc, dstType, source,
+                                                sliceOffsets, dims, strides);
 }
 
 memref::SubViewOp MaskState::getSubview(Value source, const Location loc,
                                         OpBuilder &builder) const {
   auto sourceType = cast<MemRefType>(source.getType());
-  SmallVector<OpFoldResult> offsets(getRank(), builder.getIndexAttr(0));
+  SmallVector<OpFoldResult> subOffsets;
+  for (size_t i = 0; i < getRank(); ++i)
+    subOffsets.push_back(getDimOffset(*this, i, builder));
   SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
   auto dstType =
-      memref::SubViewOp::inferResultType(sourceType, offsets, dims, strides);
+      memref::SubViewOp::inferResultType(sourceType, subOffsets, dims, strides);
 
-  return builder.create<memref::SubViewOp>(loc, cast<MemRefType>(dstType),
-                                           source, offsets, dims, strides);
+  return memref::SubViewOp::create(builder, loc, cast<MemRefType>(dstType),
+                                           source, subOffsets, dims, strides);
 }
 
 static memref::SubViewOp createSubview(Value src, Location loc, OpBuilder &b,
@@ -143,7 +175,7 @@ static memref::SubViewOp createSubview(Value src, Location loc, OpBuilder &b,
   auto srcType = cast<MemRefType>(src.getType());
   auto dstType =
       memref::SubViewOp::inferResultType(srcType, offsets, sizes, strides);
-  return b.create<memref::SubViewOp>(loc, cast<MemRefType>(dstType), src,
+  return memref::SubViewOp::create(b, loc, cast<MemRefType>(dstType), src,
                                      offsets, sizes, strides);
 }
 
@@ -207,7 +239,7 @@ MaskState::getSideBySideSubviews(Value block1, Value block2, const Location loc,
                                  OpBuilder &builder) const {
   OpFoldResult subviewRowFull = dims[0];
   OpFoldResult subviewColFull = dims[1];
-  OpFoldResult col1 = builder.create<memref::DimOp>(loc, block1, 1).getResult();
+  OpFoldResult col1 = memref::DimOp::create(builder, loc, block1, 1).getResult();
   OpFoldResult subviewCol1 = minOFRs(col1, subviewColFull, loc, builder);
   OpFoldResult subviewCol2 = subOFRs(subviewColFull, subviewCol1, loc, builder);
 
@@ -226,7 +258,7 @@ MaskState::getStackedSubviews(Value block1, Value block2, const Location loc,
                               OpBuilder &builder) const {
   OpFoldResult subviewRowFull = dims[0];
   OpFoldResult subviewColFull = dims[1];
-  OpFoldResult row1 = builder.create<memref::DimOp>(loc, block1, 0).getResult();
+  OpFoldResult row1 = memref::DimOp::create(builder, loc, block1, 0).getResult();
   OpFoldResult subviewRow1 = minOFRs(row1, subviewRowFull, loc, builder);
   OpFoldResult subviewRow2 = subOFRs(subviewRowFull, subviewRow1, loc, builder);
 
@@ -245,6 +277,12 @@ LogicalResult MaskState::addStateScalar(const MaskState &state,
   start = addOFRs(state.start, scalar, loc, builder);
   end = addOFRs(state.end, scalar, loc, builder);
   dims = state.dims;
+  offsets = state.offsets;
+  // Adding `scalar` to every lane value shifts a valid interval [lo, hi) in
+  // value space to [lo - scalar, hi - scalar). Clamp the lower bound at 0.
+  for (auto &off : offsets)
+    off = maxOFRs(subOFRs(off, scalar, loc, builder),
+                  builder.getIndexAttr(0), loc, builder);
   return success();
 }
 
@@ -254,6 +292,10 @@ LogicalResult MaskState::subStateScalar(const MaskState &state,
   start = subOFRs(state.start, scalar, loc, builder);
   end = subOFRs(state.end, scalar, loc, builder);
   dims = state.dims;
+  offsets = state.offsets;
+  // Subtracting `scalar` shifts the interval to [lo + scalar, hi + scalar).
+  for (auto &off : offsets)
+    off = addOFRs(off, scalar, loc, builder);
   return success();
 }
 
@@ -304,19 +346,38 @@ LogicalResult MaskState::addStates(const MaskState &lhsState,
 LogicalResult MaskState::minStateScalar(const MaskState &lhsState,
                                         const MaskState &rhsState, Location loc,
                                         OpBuilder &builder) {
+  auto intersect = [&](OpFoldResult lhsOff, OpFoldResult lhsDim,
+                       OpFoldResult rhsOff, OpFoldResult rhsDim) {
+    auto lo = maxOFRs(lhsOff, rhsOff, loc, builder);
+    auto hi = minOFRs(addOFRs(lhsOff, lhsDim, loc, builder),
+                      addOFRs(rhsOff, rhsDim, loc, builder), loc, builder);
+    // Clamp lo to hi so the subview stays valid for an empty interval; skip
+    // when lo is statically 0 (0 <= hi always holds, keeps lo static).
+    auto loAttr = getIntAttr(lo);
+    if (!loAttr || loAttr.value() != 0)
+      lo = minOFRs(lo, hi, loc, builder);
+    auto dim = subOFRs(hi, lo, loc, builder);
+    lo = canonicalizeEmptyInterval(dim, lo, builder);
+    offsets.push_back(lo);
+    dims.push_back(dim);
+  };
+
   if (lhsState.scalar && rhsState.scalar) {
-    dims.push_back(minOFRs(lhsState.dims[0], rhsState.dims[0], loc, builder));
+    auto zero = builder.getIndexAttr(0);
+    intersect(zero, lhsState.dims[0], zero, rhsState.dims[0]);
   } else if (lhsState.scalar) {
     for (uint32_t i = 0; i < rhsState.getRank(); i++) {
       auto lhsDim = lhsState.dims[0];
       auto rhsDim = rhsState.dims[i];
-      dims.push_back(minOFRs(lhsDim, rhsDim, loc, builder));
+      auto rhsOff = getDimOffset(rhsState, i, builder);
+      intersect(builder.getIndexAttr(0), lhsDim, rhsOff, rhsDim);
     }
   } else if (rhsState.scalar) {
     for (uint32_t i = 0; i < lhsState.getRank(); i++) {
       auto lhsDim = lhsState.dims[i];
       auto rhsDim = rhsState.dims[0];
-      dims.push_back(minOFRs(lhsDim, rhsDim, loc, builder));
+      auto lhsOff = getDimOffset(lhsState, i, builder);
+      intersect(lhsOff, lhsDim, builder.getIndexAttr(0), rhsDim);
     }
   } else {
     InFlightDiagnostic diag =
@@ -336,10 +397,25 @@ LogicalResult MaskState::minStates(const MaskState &lhsState,
     return failure();
   }
 
+  // Interval intersection per dim: lo = max(lo1, lo2),
+  // hi = min(lo1+d1, lo2+d2), dim = clamp(hi - lo, 0).
   for (uint32_t i = 0; i < lhsState.getRank(); i++) {
     auto lhsDim = lhsState.dims[i];
     auto rhsDim = rhsState.dims[i];
-    dims.push_back(minOFRs(lhsDim, rhsDim, loc, builder));
+    auto lhsOff = getDimOffset(lhsState, i, builder);
+    auto rhsOff = getDimOffset(rhsState, i, builder);
+    auto lo = maxOFRs(lhsOff, rhsOff, loc, builder);
+    auto hi = minOFRs(addOFRs(lhsOff, lhsDim, loc, builder),
+                      addOFRs(rhsOff, rhsDim, loc, builder), loc, builder);
+    // Clamp lo to hi so the subview stays valid for an empty interval; skip
+    // when lo is statically 0 (0 <= hi always holds, keeps lo static).
+    auto loAttr = getIntAttr(lo);
+    if (!loAttr || loAttr.value() != 0)
+      lo = minOFRs(lo, hi, loc, builder);
+    auto dim = subOFRs(hi, lo, loc, builder);
+    lo = canonicalizeEmptyInterval(dim, lo, builder);
+    offsets.push_back(lo);
+    dims.push_back(dim);
   }
   return success();
 }
@@ -371,7 +447,7 @@ LogicalResult MaskState::parseIntScalar(Value scalar, const Location loc,
                                         OpBuilder &builder) {
   assert(this->isEmpty());
   auto castOp =
-      builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), scalar);
+      arith::IndexCastOp::create(builder, loc, builder.getIndexType(), scalar);
   this->scalar = castOp.getResult();
   return success();
 }
@@ -384,6 +460,9 @@ void MaskState::dump() const {
   llvm::dbgs() << "dims: ";
   for (auto dim : dims)
     llvm::dbgs() << "\t" << dim << "\n";
+  llvm::dbgs() << "offsets: ";
+  for (auto off : offsets)
+    llvm::dbgs() << "\t" << off << "\n";
   llvm::dbgs() << "\n";
 }
 
@@ -471,12 +550,24 @@ LogicalResult MaskState::parseAnd(arith::AndIOp andOp, const Location loc,
           assert(lhsVal && rhsVal &&
                  "Expected boolean tensor Values for non-continuous dims");
           dims.push_back(
-              builder.create<arith::AndIOp>(loc, lhsVal, rhsVal).getResult());
+              arith::AndIOp::create(builder, loc, lhsVal, rhsVal).getResult());
+          offsets.push_back(builder.getIndexAttr(0));
           continue;
         }
         auto lhsDim = lhsState.dims[i];
         auto rhsDim = rhsState.dims[i];
-        dims.push_back(minOFRs(lhsDim, rhsDim, loc, builder));
+        auto lhsOff = getDimOffset(lhsState, i, builder);
+        auto rhsOff = getDimOffset(rhsState, i, builder);
+        auto lo = maxOFRs(lhsOff, rhsOff, loc, builder);
+        auto hi = minOFRs(addOFRs(lhsOff, lhsDim, loc, builder),
+                          addOFRs(rhsOff, rhsDim, loc, builder), loc, builder);
+        auto loAttr = getIntAttr(lo);
+        if (!loAttr || loAttr.value() != 0)
+          lo = minOFRs(lo, hi, loc, builder);
+        auto dim = subOFRs(hi, lo, loc, builder);
+        lo = canonicalizeEmptyInterval(dim, lo, builder);
+        offsets.push_back(lo);
+        dims.push_back(dim);
       }
       this->nonContinuousDim = lhsState.nonContinuousDim;
       return success();
@@ -507,31 +598,42 @@ LogicalResult MaskState::parseAnd(arith::AndIOp andOp, const Location loc,
           uint32_t dimSize = tensorType.getShape()[nonContinuousDim];
           auto i32TensorType =
               RankedTensorType::get({dimSize}, builder.getI32Type());
-          Value range = builder.create<triton::MakeRangeOp>(loc, i32TensorType, 0,
+          Value range = triton::MakeRangeOp::create(builder, loc, i32TensorType, 0,
                                                             dimSize);
           Value rhsVal = ofrToIndexValue(rhsDim, loc, builder);
-          Value rhsValI32 = builder.create<arith::IndexCastOp>(
+          Value rhsValI32 = arith::IndexCastOp::create(builder,
               loc, builder.getI32Type(), rhsVal);
           Value rhsValSplat =
-              builder.create<triton::SplatOp>(loc, i32TensorType, rhsValI32);
-          rhsDimValue = builder.create<arith::CmpIOp>(
+              triton::SplatOp::create(builder, loc, i32TensorType, rhsValI32);
+          rhsDimValue = arith::CmpIOp::create(builder,
               loc, arith::CmpIPredicate::ult, range, rhsValSplat);
         }
 
         dims.push_back(
             rhsDimValue
-                ? builder
-                      .create<arith::AndIOp>(
+                ? arith::AndIOp::create(builder,
                           loc, dyn_cast<Value>(lhs->dims[nonContinuousDim]),
                           rhsDimValue)
                       .getResult()
                 : lhs->dims[nonContinuousDim]);
+        offsets.push_back(builder.getIndexAttr(0));
         continue;
       }
 
       auto lhsDim = lhsState.dims[i];
       auto rhsDim = rhsState.dims[i];
-      dims.push_back(minOFRs(lhsDim, rhsDim, loc, builder));
+      auto lhsOff = getDimOffset(lhsState, i, builder);
+      auto rhsOff = getDimOffset(rhsState, i, builder);
+      auto lo = maxOFRs(lhsOff, rhsOff, loc, builder);
+      auto hi = minOFRs(addOFRs(lhsOff, lhsDim, loc, builder),
+                        addOFRs(rhsOff, rhsDim, loc, builder), loc, builder);
+      auto loAttr = getIntAttr(lo);
+      if (!loAttr || loAttr.value() != 0)
+        lo = minOFRs(lo, hi, loc, builder);
+      auto dim = subOFRs(hi, lo, loc, builder);
+      lo = canonicalizeEmptyInterval(dim, lo, builder);
+      offsets.push_back(lo);
+      dims.push_back(dim);
     }
     this->nonContinuousDim = lhs->nonContinuousDim;
     return success();
@@ -568,13 +670,13 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location loc,
   if (failed(rhsState.parse(cmpOp.getRhs(), loc, builder)))
     return failure();
 
-  // We only support sge against 0 for lower bounds. Dims already has an
-  // implicit assumption that the lower bound is 0, so if we see this, assume
-  // the comparison evaluates to true.
-  if (cmpOp.getPredicate() == arith::CmpIPredicate::sge
-    && !(rhsState.scalar && hasConstZero(rhsState.scalar))) {
-    InFlightDiagnostic diag = cmpOp->emitWarning(
-      "Unsupported cmpi with rhs not equal to 0");
+  // sge requires a scalar rhs: lane i is valid when start + i >= rhs.
+  // The rhs need not be zero; the interval lower bound is computed at runtime
+  // for dynamic rhs.
+  if (cmpOp.getPredicate() == arith::CmpIPredicate::sge &&
+      !rhsState.scalar) {
+    InFlightDiagnostic diag =
+        cmpOp->emitWarning("Unsupported sge cmpi with non-scalar rhs");
     return failure();
   }
 
@@ -599,20 +701,20 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location loc,
          "Unexpected case where no dimension has size larger than 1");
 
   OpFoldResult newDim;
+  OpFoldResult newOffset = builder.getIndexAttr(0);
   if (lhsState.hasNonContinuousDim()) {
     assert(rhsState.scalar && "Unexpected case where rhs is not a scalar");
     assert(cmpDim == lhsState.getNonContinuousDim());
     auto lhsValue = dyn_cast<Value>(lhsState.dims[cmpDim]);
     auto tensorType = cast<RankedTensorType>(lhsValue.getType());
 
-    auto rhsValue = builder.create<arith::IndexCastOp>(
+    auto rhsValue = arith::IndexCastOp::create(builder,
         loc, tensorType.getElementType(),
         ofrToIndexValue(rhsState.scalar, loc, builder));
     auto rhsTensorValue =
-        builder.create<triton::SplatOp>(loc, tensorType, rhsValue);
+        triton::SplatOp::create(builder, loc, tensorType, rhsValue);
 
-    newDim = builder
-                 .create<arith::CmpIOp>(loc, cmpOp.getPredicate(), lhsValue,
+    newDim = arith::CmpIOp::create(builder, loc, cmpOp.getPredicate(), lhsValue,
                                         rhsTensorValue)
                  ->getResult(0);
 
@@ -649,26 +751,32 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location loc,
     newEnd = maxOFRs(newEnd, lhsState.start, loc, builder);
     newDim = subOFRs(newEnd, lhsState.start, loc, builder);
   } else {
-    assert(cmpOp.getPredicate() == arith::CmpIPredicate::sge && rhsState.scalar
-           && hasConstZero(rhsState.scalar));
-    // For `(offs - n) >= 0` the valid lanes are the suffix [n, dims): the
-    // prefix-only mask-dims model cannot express a non-zero lower bound.
-    // Only when the lower bound is statically >= 0 is the comparison always
-    // true and the full dims correct. Otherwise bail out so the load/store
-    // falls back to the unstructured gather/scatter path, which preserves
-    // the mask instead of emitting a full-range access below the base.
-    auto startAttr = getIntAttr(lhsState.start);
-    if (!startAttr || startAttr.value() < 0) {
+    assert(cmpOp.getPredicate() == arith::CmpIPredicate::sge && rhsState.scalar);
+    if (!lhsState.start || !lhsState.end) {
+      // sge against a mask state (e.g. a comparison result) has no value
+      // range to derive the lower bound from.
+      cmpOp->emitWarning("Unsupported sge cmpi without a value range");
       return failure();
     }
-    newDim = lhsState.dims[cmpDim];
+    // Lane i is valid when start + i >= rhs, i.e. the interval
+    // [clamp(rhs - start, 0), dims). Clamp the offset to the tensor size so
+    // the empty case (lo == dims) still yields a valid subview.
+    auto fullDim = lhsState.dims[cmpDim];
+    newOffset = subOFRs(rhsState.scalar, lhsState.start, loc, builder);
+    newOffset = maxOFRs(newOffset, builder.getIndexAttr(0), loc, builder);
+    newOffset = minOFRs(newOffset, fullDim, loc, builder);
+    newDim = subOFRs(fullDim, newOffset, loc, builder);
+    newOffset = canonicalizeEmptyInterval(newDim, newOffset, builder);
   }
 
   for (int32_t i = 0; i < lhsState.getRank(); i++) {
-    if (i == cmpDim)
+    if (i == cmpDim) {
       this->dims.push_back(newDim);
-    else
+      this->offsets.push_back(newOffset);
+    } else {
       this->dims.push_back(lhsState.dims[i]);
+      this->offsets.push_back(getDimOffset(lhsState, i, builder));
+    }
   }
 
   return success();
@@ -709,6 +817,7 @@ LogicalResult MaskState::parseLoopIterArg(Value v, const Location loc,
       auto constOp = tritonValue.getDefiningOp<arith::ConstantOp>();
       if (llvm::succeeded(this->parseConstant(constOp, loc, builder))) {
         this->dims.push_back(builder.getIndexAttr(1));
+        this->offsets.push_back(builder.getIndexAttr(0));
         return success();
       }
       return failure();
@@ -758,6 +867,9 @@ LogicalResult MaskState::parseMakeRange(triton::MakeRangeOp rangeOp,
   this->start = builder.getIndexAttr(start);
   this->end = builder.getIndexAttr(end);
   this->dims.push_back(builder.getIndexAttr(shape[0]));
+  // Mask intervals are relative to the lane index (lane 0 is the interval
+  // start), so a plain range contributes a prefix interval.
+  this->offsets.push_back(builder.getIndexAttr(0));
 
   return success();
 }
@@ -780,12 +892,16 @@ LogicalResult MaskState::parseBroadcast(triton::BroadcastOp broadcastOp,
   if (failed(parse(src, loc, builder)))
     return failure();
 
+  // A broadcast dim covers its whole extent: the interval on that dim starts
+  // at 0. Align the offsets vector with dims (missing entries default to 0).
+  this->offsets.resize(this->dims.size(), builder.getIndexAttr(0));
   for (size_t i = 0; i < srcShape.size(); i++) {
     if (srcShape[i] == dstShape[i])
       continue;
-    else if (srcShape[i] < dstShape[i])
+    else if (srcShape[i] < dstShape[i]) {
       this->dims[i] = builder.getIndexAttr(dstShape[i]);
-    else
+      this->offsets[i] = builder.getIndexAttr(0);
+    } else
       llvm_unreachable("unexpected dimensions used in broadcast");
   }
 
@@ -807,11 +923,31 @@ LogicalResult MaskState::parseSplat(triton::SplatOp splatOp, const Location loc,
     return failure();
   }
 
+  // A boolean splat is a lane predicate, which the interval model cannot
+  // express: `minStates` only intersects dims and ignores `scalar`, so the
+  // predicate would be silently dropped and the whole tile accessed anyway.
+  // Reject it so PtrAnalysis falls back to gather/scatter. Only a literal
+  // `true` splat really means "all lanes valid".
+  if (src.getType().isInteger(1)) {
+    bool isConstTrue = false;
+    if (auto constOp = src.getDefiningOp<arith::ConstantOp>())
+      if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue()))
+        isConstTrue = !intAttr.getValue().isZero();
+    if (!isConstTrue) {
+      InFlightDiagnostic diag =
+          splatOp->emitWarning("scalar boolean mask is not supported by the "
+                               "structured interval model; using gather/scatter");
+      return failure();
+    }
+  }
+
   if (failed(this->parse(src, loc, builder)))
     return failure();
 
-  for (auto s : dstShape)
+  for (auto s : dstShape) {
     this->dims.push_back(builder.getIndexAttr(s));
+    this->offsets.push_back(builder.getIndexAttr(0));
+  }
 
   return success();
 }
@@ -830,6 +966,8 @@ LogicalResult MaskState::parseExpandDims(triton::ExpandDimsOp expandDimsOp,
   assert(dstShape[axis] == 1 &&
          "expect changed dimension to be 1 in expand_dims");
   this->dims.insert(this->dims.begin() + axis, builder.getIndexAttr(1));
+  // Offsets stay parallel to dims: the expanded axis is a prefix interval.
+  this->offsets.insert(this->offsets.begin() + axis, builder.getIndexAttr(0));
 
   if (hasNonContinuousDim()) {
     assert(dstShape.size() == 2);
@@ -872,6 +1010,7 @@ LogicalResult MaskState::parseRemsi(arith::RemSIOp remsiOp,
 
   start = lhsState.start;
   dims = lhsState.dims;
+  offsets = lhsState.offsets;
   end = minOFRs(lhsState.end, rhsState.scalar, loc, builder);
   stateInfo = lhsState.stateInfo;
   for(auto &info: stateInfo){
@@ -927,6 +1066,7 @@ LogicalResult MaskState::parseDivsi(arith::DivSIOp divsiOp,
 
   start = divOFRs(lhsState.start, rhsState.scalar, loc, builder);
   dims = lhsState.dims;
+  offsets = lhsState.offsets;
   auto minEnd = addOFRs(start, builder.getIndexAttr(1), loc, builder);
   end = subOFRs(lhsState.end, builder.getIndexAttr(1), loc, builder);
   end = divOFRs(end, rhsState.scalar, loc, builder);
@@ -978,11 +1118,12 @@ tensor::InsertSliceOp MaskState::getInsertSlice(Value source, Value dest,
                                                 const Location &loc,
                                                 OpBuilder &builder) const {
   auto sourceType = cast<RankedTensorType>(source.getType());
-  //fixme, kaixin offsets are class member originally
-  SmallVector<OpFoldResult> offsets(getRank(), builder.getIndexAttr(0));
+  SmallVector<OpFoldResult> insertOffsets;
+  for (size_t i = 0; i < getRank(); ++i)
+    insertOffsets.push_back(getDimOffset(*this, i, builder));
   SmallVector<OpFoldResult> strides(getRank(), builder.getIndexAttr(1));
-  return builder.create<tensor::InsertSliceOp>(loc, source, dest, offsets, dims,
-                                               strides);
+  return tensor::InsertSliceOp::create(builder, loc, source, dest, insertOffsets,
+                                               dims, strides);
 }
 
 } // namespace triton

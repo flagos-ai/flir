@@ -35,8 +35,8 @@ struct CopyConverter : public OpConversionPattern<memref::CopyOp> {
     SmallVector<Value> values;
     for (OpFoldResult ofr : ofrs) {
       if (Attribute attr = ofr.dyn_cast<Attribute>()) {
-        values.push_back(builder.create<arith::ConstantIndexOp>(
-            loc, mlir::cast<IntegerAttr>(attr).getInt()));
+        values.push_back(arith::ConstantIndexOp::create(
+            builder, loc, mlir::cast<IntegerAttr>(attr).getInt()));
       } else {
         values.push_back(ofr.dyn_cast<Value>());
       }
@@ -50,7 +50,7 @@ struct CopyConverter : public OpConversionPattern<memref::CopyOp> {
     assert(!sizes.empty());
     Value total = sizes.front();
     for (size_t i = 1; i < sizes.size(); ++i) {
-      total = builder.create<arith::MulIOp>(loc, total, sizes[i]);
+      total = arith::MulIOp::create(builder, loc, total, sizes[i]);
     }
     return total;
   }
@@ -90,7 +90,7 @@ struct CopyConverter : public OpConversionPattern<memref::CopyOp> {
     Value src = adaptor.getSource();
     Value dst = adaptor.getTarget();
 
-    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value zero = arith::ConstantIndexOp::create(rewriter, loc, 0);
 
     SmallVector<Value> srcIndices, dstIndices;
     Value numElements;
@@ -138,13 +138,13 @@ struct CopyConverter : public OpConversionPattern<memref::CopyOp> {
     Attribute tagMemSpace = IntegerAttr::get(i32Type, dmaTag);
 
     MemRefType tagType = MemRefType::get({1}, i32Type, nullptr, tagMemSpace);
-    Value tag = rewriter.create<memref::AllocOp>(loc, tagType);
+    Value tag = memref::AllocOp::create(rewriter, loc, tagType);
     SmallVector<Value> tagIndices = {zero};
 
-    rewriter.create<memref::DmaStartOp>(loc, src, srcIndices, dst, dstIndices,
-                                        numElements, tag, tagIndices);
+    memref::DmaStartOp::create(rewriter, loc, src, srcIndices, dst, dstIndices,
+                               numElements, tag, tagIndices);
 
-    rewriter.create<memref::DmaWaitOp>(loc, tag, tagIndices, numElements);
+    memref::DmaWaitOp::create(rewriter, loc, tag, tagIndices, numElements);
 
     rewriter.eraseOp(op);
     return success();

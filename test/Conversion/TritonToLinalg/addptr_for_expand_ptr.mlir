@@ -51,23 +51,24 @@ module {
     tt.return
   }
 }
-// CHECK-LABEL:   func.func @kernel(
-// CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: i32, %[[VAL_2:.*]]: i32, %[[VAL_3:.*]]: i32) {
-// CHECK-DAG:           %[[VAL_4:.*]] = arith.constant 2 : index
-// CHECK-DAG:           %[[VAL_5:.*]] = arith.constant 256 : index
-// CHECK-DAG:           %[[VAL_6:.*]] = arith.constant 1024 : index
-// CHECK-DAG:           %[[VAL_7:.*]] = arith.constant 0 : index
-// CHECK-DAG:           %[[VAL_8:.*]] = arith.constant 12 : index
-// CHECK-DAG:           %[[VAL_9:.*]] = arith.constant 3 : index
-// CHECK:           %[[VAL_10:.*]] = scf.for %[[VAL_11:.*]] = %[[VAL_7]] to %[[VAL_8]] step %[[VAL_9]] iter_args(%[[VAL_12:.*]] = %[[VAL_6]]) -> (index) {
-// CHECK:             %[[VAL_13:.*]] = arith.addi %[[VAL_12]], %[[VAL_5]] : index
-// CHECK:             %[[VAL_14:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_13]]], sizes: [256, 256], strides: {{\[}}%[[VAL_4]], 1] : memref<*xbf16> to memref<256x256xbf16, strided<[?, 1], offset: ?>>
-// CHECK:             %[[VAL_15:.*]] = memref.alloc() : memref<256x256xbf16>
-// CHECK:             memref.copy %[[VAL_14]], %[[VAL_15]] : memref<256x256xbf16, strided<[?, 1], offset: ?>> to memref<256x256xbf16>
-// CHECK:             %[[VAL_16:.*]] = bufferization.to_tensor %[[VAL_15]] restrict writable : memref<256x256xbf16>
-// CHECK:             bufferization.materialize_in_destination %[[VAL_16]] in writable %[[VAL_14]]
-// CHECK:             %[[VAL_17:.*]] = arith.addi %[[VAL_12]], %[[VAL_9]] : index
-// CHECK:             scf.yield %[[VAL_17]] : index
-// CHECK:           }
-// CHECK:           return
-// CHECK:         }
+// CHECK: module {
+// CHECK:   func.func @kernel(%arg0: memref<*xbf16>, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32) {
+// CHECK:     %c256 = arith.constant 256 : index
+// CHECK:     %c1024 = arith.constant 1024 : index
+// CHECK:     %c0 = arith.constant 0 : index
+// CHECK:     %c12 = arith.constant 12 : index
+// CHECK:     %c3 = arith.constant 3 : index
+// CHECK:     %0 = scf.for %arg7 = %c0 to %c12 step %c3 iter_args(%arg8 = %c1024) -> (index) {
+// CHECK:       %1 = arith.addi %arg8, %c256 : index
+// CHECK:       %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256, 256], strides: [2, 1] : memref<*xbf16> to memref<256x256xbf16, strided<[2, 1], offset: ?>>
+// CHECK:       %cast = memref.cast %reinterpret_cast : memref<256x256xbf16, strided<[2, 1], offset: ?>> to memref<256x256xbf16, strided<[?, 1], offset: ?>>
+// CHECK:       %alloc = memref.alloc() : memref<256x256xbf16>
+// CHECK:       memref.copy %reinterpret_cast, %alloc : memref<256x256xbf16, strided<[2, 1], offset: ?>> to memref<256x256xbf16>
+// CHECK:       %2 = bufferization.to_tensor %alloc restrict writable : memref<256x256xbf16> to tensor<256x256xbf16>
+// CHECK:       bufferization.materialize_in_destination %2 in writable %cast : (tensor<256x256xbf16>, memref<256x256xbf16, strided<[?, 1], offset: ?>>) -> ()
+// CHECK:       %3 = arith.addi %arg8, %c3 : index
+// CHECK:       scf.yield %3 : index
+// CHECK:     }
+// CHECK:     return
+// CHECK:   }
+// CHECK: }

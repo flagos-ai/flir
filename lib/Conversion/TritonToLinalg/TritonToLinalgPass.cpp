@@ -26,7 +26,7 @@
 using namespace mlir;
 using namespace triton;
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DEF_TRITONTOLINALG
 #include "triton-shared/Conversion/TritonToLinalg/Passes.h.inc"
 
 namespace {
@@ -49,7 +49,7 @@ public:
   }
 };
 
-class TritonToLinalgPass : public TritonToLinalgBase<TritonToLinalgPass> {
+class TritonToLinalgPass : public ::impl::TritonToLinalgBase<TritonToLinalgPass> {
 
   static auto constexpr LAUNCH_GRID_RANK = getMaxEnumValForProgramIDDim() + 1;
   static unsigned int constexpr TRITON_PROGRAM_INFO_ARG_COUNT =
@@ -195,7 +195,7 @@ public:
       func.getAllArgAttrs(argAttrs);
       func.getAllResultAttrs(resAttrs);
 
-      auto funcFunc = builder.create<func::FuncOp>(func.getLoc(), name, type);
+      auto funcFunc = func::FuncOp::create(builder, func.getLoc(), name, type);
       funcFunc.setAllArgAttrs(argAttrs);
       funcFunc.setAllResultAttrs(resAttrs);
 
@@ -208,7 +208,7 @@ public:
       for (Block &block : funcFuncBody.getBlocks()) {
         auto term = block.getTerminator();
         builder.setInsertionPoint(term);
-        builder.create<func::ReturnOp>(func.getLoc(), term->getOperands());
+        func::ReturnOp::create(builder, func.getLoc(), term->getOperands());
         term->erase();
       }
       func.erase();

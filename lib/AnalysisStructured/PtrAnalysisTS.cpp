@@ -52,16 +52,19 @@ static void boundaryCheckToMaskDim(OpBuilder &builder, Location loc,
     auto stride = ofrToIndexValue(ptrState.strides[i], loc, builder);
 
     auto start = ofrToIndexValue(ptrState.offsets[i], loc, builder);
-    start = builder.create<arith::DivSIOp>(loc, start, stride);
+    start = arith::DivSIOp::create(builder, loc, start, stride);
 
     auto end = ofrToIndexValue(ptrState.sizes[i], loc, builder);
-    end = builder.create<arith::AddIOp>(loc, start, end);
+    end = arith::AddIOp::create(builder, loc, start, end);
 
-    Value upperBound = builder.create<arith::MinSIOp>(loc, dim, end);
-    upperBound = builder.create<arith::MaxSIOp>(loc, start, upperBound);
-    auto maskedShape = builder.create<arith::SubIOp>(loc, upperBound, start);
+    Value upperBound = arith::MinSIOp::create(builder, loc, dim, end);
+    upperBound = arith::MaxSIOp::create(builder, loc, start, upperBound);
+    auto maskedShape = arith::SubIOp::create(builder, loc, upperBound, start);
 
     maskState.dims.push_back(maskedShape.getResult());
+    // The valid interval is relative to the block start (which is already
+    // folded into the pointer), so boundary checks are prefix intervals.
+    maskState.offsets.push_back(builder.getIndexAttr(0));
   }
 }
 
@@ -126,8 +129,7 @@ static Value applyUnstructuredMask(Operation *op, Value ptr,
 
   // Clear the mask size for gather/scatter dim.
   mstate.dims[nonContinuousDim] = OpFoldResult(builder.getI32IntegerAttr(0));
-  return builder
-      .create<tts::MakeGatherScatterTensorPtrOp>(
+  return tts::MakeGatherScatterTensorPtrOp::create(builder,
           loc, gatherScatterPtr.getBase(),
           gatherScatterPtr.getGatherScatterOffset(),
           dyn_cast<Value>(nonContinuousMask),
@@ -187,6 +189,46 @@ bool isSupportedStructuredPtr(Value ptr) {
 
 bool PtrState::isBlockPtr() const { return !order.empty(); }
 
+// Two unstructured offsets need not share a type (an i32 index chain meeting an
+// i64 one); AddIOp takes its result type from the lhs and then emits invalid IR.
+// Reconcile first: index if either side is index, otherwise the wider integer.
+struct ReconciledOffsets {
+  Value lhs;
+  Value rhs;
+  bool ok = false;
+};
+
+static ReconciledOffsets reconcileOffsetTypes(Value lhs, Value rhs,
+                                              Location loc, OpBuilder &b) {
+  if (lhs.getType() == rhs.getType())
+    return {lhs, rhs, true};
+
+  auto lhsTy = dyn_cast<RankedTensorType>(lhs.getType());
+  auto rhsTy = dyn_cast<RankedTensorType>(rhs.getType());
+  if (!lhsTy || !rhsTy || lhsTy.getShape() != rhsTy.getShape())
+    return {lhs, rhs, false};
+
+  Type lhsElem = lhsTy.getElementType();
+  Type rhsElem = rhsTy.getElementType();
+  if (!lhsElem.isIntOrIndex() || !rhsElem.isIntOrIndex())
+    return {lhs, rhs, false};
+
+  Type target = lhsElem.isIndex() || rhsElem.isIndex()
+                    ? b.getIndexType()
+                    : (lhsElem.getIntOrFloatBitWidth() >=
+                               rhsElem.getIntOrFloatBitWidth()
+                           ? lhsElem
+                           : rhsElem);
+  auto castTo = [&](Value v, Type elem) -> Value {
+    if (elem == target)
+      return v;
+    auto ty = RankedTensorType::get(lhsTy.getShape(), target);
+    if (target.isIndex())
+      return arith::IndexCastOp::create(b, loc, ty, v);
+    return arith::ExtSIOp::create(b, loc, ty, v);
+  };
+  return {castTo(lhs, lhsElem), castTo(rhs, rhsElem), true};
+}
 LogicalResult PtrState::addState(const PtrState &lhsState,
                                  const PtrState &rhsState, Operation *op,
                                  OpBuilder &builder) {
@@ -204,7 +246,7 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
 
   if (lhsState.scalar && rhsState.scalar) {
     auto addOp =
-        builder.create<arith::AddIOp>(loc, lhsState.scalar, rhsState.scalar);
+        arith::AddIOp::create(builder, loc, lhsState.scalar, rhsState.scalar);
     scalar = addOp.getResult();
   } else if (lhsState.getRank() == 0) {
     // both lhs and rhs are scalars. but only one of them has a scalar value
@@ -238,11 +280,17 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
 
     strides.push_back(builder.getIndexAttr(1));
     if (!lhsStructured && !rhsStructured) {
-      auto newOffset =
-          builder
-              .create<arith::AddIOp>(loc, dyn_cast<Value>(lhsState.offsets[i]),
-                                     dyn_cast<Value>(rhsState.offsets[i]))
-              ->getResult(0);
+      auto lhsOffset = dyn_cast<Value>(lhsState.offsets[i]);
+      auto rhsOffset = dyn_cast<Value>(rhsState.offsets[i]);
+      if (!lhsOffset || !rhsOffset)
+        return failure();
+      auto reconciled =
+          reconcileOffsetTypes(lhsOffset, rhsOffset, loc, builder);
+      if (!reconciled.ok)
+        return failure();
+      auto newOffset = arith::AddIOp::create(builder, loc, reconciled.lhs,
+                                             reconciled.rhs)
+                           ->getResult(0);
       offsets.push_back(newOffset);
       continue;
     }
@@ -257,12 +305,12 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
                   dyn_cast<Value>(lhsState.offsets[i])};
 
     auto tensorType = cast<RankedTensorType>(rhsOffset.getType());
-    lhsOffset = builder.create<arith::IndexCastOp>(
+    lhsOffset = arith::IndexCastOp::create(builder,
         loc, tensorType.getElementType(), lhsOffset);
-    lhsOffset = builder.create<triton::SplatOp>(loc, tensorType, lhsOffset);
+    lhsOffset = triton::SplatOp::create(builder, loc, tensorType, lhsOffset);
 
     auto newOffset =
-        builder.create<arith::AddIOp>(loc, lhsOffset, rhsOffset)->getResult(0);
+        arith::AddIOp::create(builder, loc, lhsOffset, rhsOffset)->getResult(0);
     offsets.push_back(newOffset);
   }
 
@@ -362,14 +410,14 @@ LogicalResult PtrState::addState(const PtrState &lhsState,
       Value modVal = ofrToIndexValue(shape[i], loc, builder);
       // Cast modVal to match tensor element type and splat to tensor shape
       Type elemTy = tensorType.getElementType();
-      Value modCasted = builder.create<arith::IndexCastOp>(loc, elemTy, modVal);
-      Value modSplat = builder.create<triton::SplatOp>(loc, tensorType, modCasted);
+      Value modCasted = arith::IndexCastOp::create(builder, loc, elemTy, modVal);
+      Value modSplat = triton::SplatOp::create(builder, loc, tensorType, modCasted);
       // Cast offset tensor to match element type if needed
       Value offsetCasted = offsetTensor;
       if (offsetTensor.getType() != tensorType) {
-        offsetCasted = builder.create<arith::IndexCastOp>(loc, elemTy, offsetTensor);
+        offsetCasted = arith::IndexCastOp::create(builder, loc, elemTy, offsetTensor);
       }
-      Value remVal = builder.create<arith::RemSIOp>(loc, offsetCasted, modSplat);
+      Value remVal = arith::RemSIOp::create(builder, loc, offsetCasted, modSplat);
       offsets[i] = remVal;
     }
   }
@@ -436,7 +484,7 @@ LogicalResult PtrState::mulState(const PtrState &lhsState,
 
   if (lhsState.scalar && rhsState.scalar) {
     scalar =
-        builder.create<arith::MulIOp>(loc, lhsState.scalar, rhsState.scalar);
+        arith::MulIOp::create(builder, loc, lhsState.scalar, rhsState.scalar);
   }
 
   assert(rhs->scalar && "rhs always scalar");
@@ -458,12 +506,12 @@ LogicalResult PtrState::mulState(const PtrState &lhsState,
     auto lhsOffset = dyn_cast<Value>(lhs->offsets[i]);
 
     auto tensorType = cast<RankedTensorType>(lhsOffset.getType());
-    auto rhsScalar = builder.create<arith::IndexCastOp>(
+    auto rhsScalar = arith::IndexCastOp::create(builder,
         loc, tensorType.getElementType(), rhs->scalar);
     auto rhsSplatTensor =
-        builder.create<triton::SplatOp>(loc, tensorType, rhsScalar);
+        triton::SplatOp::create(builder, loc, tensorType, rhsScalar);
     OpFoldResult newOffset =
-        builder.create<arith::MulIOp>(loc, lhsOffset, rhsSplatTensor)
+        arith::MulIOp::create(builder, loc, lhsOffset, rhsSplatTensor)
             ->getResult(0);
 
     offsets.push_back(newOffset);
@@ -507,7 +555,7 @@ LogicalResult PtrState::subState(const PtrState &lhsState,
 
   if (lhsState.scalar && rhsState.scalar) {
     auto subOp =
-        builder.create<arith::SubIOp>(loc, lhsState.scalar, rhsState.scalar);
+        arith::SubIOp::create(builder, loc, lhsState.scalar, rhsState.scalar);
     scalar = subOp.getResult();
   } else if (lhsState.getRank() == 0) { // both lhs and rhs are scalars
     scalar = lhsState.scalar ? lhsState.scalar : rhsState.scalar;
@@ -547,7 +595,7 @@ Operation *PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
   for (auto s : shape) {
     if (Value val = dyn_cast<Value>(s)) {
       if (!val.getType().isIndex()) {
-        val = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), val);
+        val = arith::IndexCastOp::create(builder, loc, builder.getIndexType(), val);
       }
       indexShapes.push_back(val);
     } else {
@@ -558,7 +606,7 @@ Operation *PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
   if (!isStructured()) {
     int nonContinuousDim = getNonStructuredDim();
     Value nonContinuousOffset = cast<Value>(offsets[nonContinuousDim]);
-    auto op = builder.create<tts::MakeGatherScatterTensorPtrOp>(
+    auto op = tts::MakeGatherScatterTensorPtrOp::create(builder,
         loc, source, nonContinuousOffset, nonContinuousDim, staticSizes,
         strides, offsets, indexShapes);
 
@@ -570,7 +618,7 @@ Operation *PtrState::createTTSMakeTensorPtrOp(OpBuilder &builder,
     return op;
   }
 
-  auto op = builder.create<tts::MakeTensorPtrOp>(
+  auto op = tts::MakeTensorPtrOp::create(builder,
       loc, source, staticSizes, strides, offsets, indexShapes, order);
   LLVM_DEBUG({
     llvm::dbgs() << "creating tts::make_tensor_ptr:\n";
@@ -699,12 +747,11 @@ LogicalResult PtrAnalysis::visitOperandDivSI(arith::DivSIOp divOp,
   }
   // Apply division to offsets and strides
   auto constDiv =
-      builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(divisor));
+      arith::ConstantOp::create(builder, loc, builder.getIndexAttr(divisor));
 
   if (state.scalar) {
     state.scalar =
-        builder
-            .create<arith::DivSIOp>(
+        arith::DivSIOp::create(builder,
                 loc, ofrToIndexValue(state.scalar, loc, builder), constDiv)
             .getResult();
     return failure();
@@ -726,8 +773,7 @@ LogicalResult PtrAnalysis::visitOperandDivSI(arith::DivSIOp divOp,
     // Divide offsets by divisor
     state.offsets[i] =
         resultType.getRank() == 2
-            ? builder
-                  .create<tensor::CollapseShapeOp>(
+            ? tensor::CollapseShapeOp::create(builder,
                       loc, divOp, SmallVector<ReassociationIndices>{{0, 1}})
                   ->getResult(0)
             : divOp->getResult(0);
@@ -1035,18 +1081,18 @@ PtrAnalysis::visitOperandMakeTensorPtr(triton::MakeTensorPtrOp makeTPtrOp,
   for (int64_t i = 0; i < pointeeType.getRank(); i++) {
     state.sizes.push_back(builder.getIndexAttr(shape[i]));
 
-    auto strideCst = builder.create<arith::IndexCastOp>(
+    auto strideCst = arith::IndexCastOp::create(builder,
         loc, builder.getIndexType(), makeTPtrOp.getStrides()[i]);
     state.strides.push_back(strideCst.getResult());
 
-    auto offsetCst = builder.create<arith::IndexCastOp>(
+    auto offsetCst = arith::IndexCastOp::create(builder,
         loc, builder.getIndexType(), makeTPtrOp.getOffsets()[i]);
 
-    auto scaledOffset = builder.create<arith::MulIOp>(
+    auto scaledOffset = arith::MulIOp::create(builder,
         loc, offsetCst.getResult(), strideCst.getResult());
     state.offsets.push_back(scaledOffset.getResult());
 
-    auto shapeCst = builder.create<arith::IndexCastOp>(
+    auto shapeCst = arith::IndexCastOp::create(builder,
         loc, builder.getIndexType(), makeTPtrOp.getShape()[i]);
     state.shape.push_back(shapeCst.getResult());
   }
@@ -1111,7 +1157,7 @@ LogicalResult PtrAnalysis::visitOperand(Value operand, PtrState &state,
     if (!isa<BlockArgument>(operand) && operand.getDefiningOp()) {
       builder.setInsertionPointAfter(operand.getDefiningOp());
     }
-    auto castOp = builder.create<arith::IndexCastOp>(
+    auto castOp = arith::IndexCastOp::create(builder,
         loc, builder.getIndexType(), operand);
     state.scalar = castOp.getResult();
     return success();
@@ -1142,7 +1188,7 @@ LogicalResult PtrAnalysis::visitOperand(Value operand, PtrState &state,
       }
     } else {
       state.source = operand;
-      state.scalar = builder.create<arith::ConstantIndexOp>(loc, 0);
+      state.scalar = arith::ConstantIndexOp::create(builder, loc, 0);
       return success();
     }
   }
@@ -1251,7 +1297,7 @@ LogicalResult PtrAnalysis::rewriteBitcastOp(triton::BitcastOp op) {
       resType = tensorType.getElementType();
     }
     auto newBitcast =
-        builder.create<triton::BitcastOp>(op->getLoc(), resType, state.source);
+        triton::BitcastOp::create(builder, op->getLoc(), resType, state.source);
     state.source = newBitcast;
     auto maketptrOp = state.createTTSMakeTensorPtrOp(builder, op.getLoc());
     ptrMap.map(op.getResult(), maketptrOp->getResult(0));
@@ -1295,18 +1341,18 @@ LogicalResult PtrAnalysis::rewriteAdvanceOp(triton::AdvanceOp op) {
        llvm::zip(incrementOffsets, state.offsets, state.strides)) {
     Value offsetValue;
     if (auto offsetIntAttr = getIntAttr(offset)) {
-      auto constOp = builder.create<arith::ConstantOp>(
+      auto constOp = arith::ConstantOp::create(builder,
           loc, builder.getIndexAttr(offsetIntAttr.value()));
       offsetValue = constOp.getResult();
     } else {
       offsetValue = cast<Value>(offset);
     }
-    auto castOp = builder.create<arith::IndexCastOp>(
+    auto castOp = arith::IndexCastOp::create(builder,
         loc, builder.getIndexType(), increment);
-    auto mulOp = builder.create<arith::MulIOp>(loc, castOp.getResult(),
+    auto mulOp = arith::MulIOp::create(builder, loc, castOp.getResult(),
                                                cast<Value>(stride));
     auto addOp =
-        builder.create<arith::AddIOp>(loc, mulOp.getResult(), offsetValue);
+        arith::AddIOp::create(builder, loc, mulOp.getResult(), offsetValue);
     newOffsets.push_back(addOp.getResult());
   }
 
@@ -1537,7 +1583,7 @@ PtrAnalysis::rewriteGetStructuredStateOp(tts::GetStructuredStateOp op) {
         "Rewrite GetStructuredStateOp failed. Could not find PtrState."));
     auto numResults = op.getNumResults();
     SmallVector<Value> replacements(
-        numResults, builder.create<arith::ConstantOp>(op.getLoc(),
+        numResults, arith::ConstantOp::create(builder, op.getLoc(),
                                                       builder.getIndexAttr(0)));
     replacements.front() = tritonValue;
     op.getResults().replaceAllUsesWith(replacements);
@@ -1552,7 +1598,7 @@ PtrAnalysis::rewriteGetStructuredStateOp(tts::GetStructuredStateOp op) {
       (state.getRank() != 2 || state.getNonStructuredDim() != 0)) {
     auto numResults = op.getNumResults();
     SmallVector<Value> replacements(
-        numResults, builder.create<arith::ConstantOp>(op.getLoc(),
+        numResults, arith::ConstantOp::create(builder, op.getLoc(),
                                                       builder.getIndexAttr(0)));
     replacements.front() = tritonValue;
     op.getResults().replaceAllUsesWith(replacements);
@@ -1572,14 +1618,14 @@ PtrAnalysis::rewriteGetStructuredStateOp(tts::GetStructuredStateOp op) {
     } else {
       // This operand is a pointer directly from the kernel arguments.
       // Use offset 0.
-      replacements.push_back(builder.create<arith::ConstantOp>(
+      replacements.push_back(arith::ConstantOp::create(builder,
           op.getLoc(), builder.getIndexAttr(0)));
     }
   } else {
     for (auto [j, s] : llvm::enumerate(state.offsets)) {
       auto sIntAttr = getIntAttr(s);
       if (sIntAttr) {
-        auto constOp = builder.create<arith::ConstantOp>(
+        auto constOp = arith::ConstantOp::create(builder,
             op.getLoc(), builder.getIndexAttr(sIntAttr.value()));
         replacements.push_back(constOp.getResult());
       } else {
@@ -1590,7 +1636,7 @@ PtrAnalysis::rewriteGetStructuredStateOp(tts::GetStructuredStateOp op) {
     for (auto [j, s] : llvm::enumerate(state.strides)) {
       auto sIntAttr = getIntAttr(s);
       if (sIntAttr) {
-        auto constOp = builder.create<arith::ConstantOp>(
+        auto constOp = arith::ConstantOp::create(builder,
             op.getLoc(), builder.getIndexAttr(sIntAttr.value()));
         replacements.push_back(constOp.getResult());
       } else {
@@ -1630,6 +1676,7 @@ LogicalResult PtrAnalysis::rewriteLoadOp(triton::LoadOp op,
   }
 
   ArrayRef<OpFoldResult> dims;
+  ArrayRef<OpFoldResult> offsets;
   mlir::triton::MaskState mstate(useUnsafeMask);
   Value scalarOther;
 
@@ -1646,7 +1693,10 @@ LogicalResult PtrAnalysis::rewriteLoadOp(triton::LoadOp op,
     if (!ptr)
       return failure();
 
+    assert(mstate.hasParallelOffsets() &&
+           "mask offsets must stay parallel to dims");
     dims = mstate.dims;
+    offsets = mstate.offsets;
   }
 
   auto boundaryCheck = op.getBoundaryCheck();
@@ -1656,6 +1706,7 @@ LogicalResult PtrAnalysis::rewriteLoadOp(triton::LoadOp op,
     boundaryCheckToMaskDim(builder, loc, knownPtrs.at(op.getPtr()),
                            boundaryCheck, mstate);
     dims = mstate.dims;
+    offsets = mstate.offsets;
   }
 
   if (other) {
@@ -1669,7 +1720,7 @@ LogicalResult PtrAnalysis::rewriteLoadOp(triton::LoadOp op,
     }
   }
 
-  auto loadOp = builder.create<tts::LoadOp>(loc, ptr, dims, scalarOther);
+  auto loadOp = tts::LoadOp::create(builder, loc, ptr, dims, offsets, scalarOther);
 
   LLVM_DEBUG({
     llvm::dbgs() << "creating tts::load:\n";
@@ -1788,6 +1839,7 @@ LogicalResult PtrAnalysis::rewriteStoreOp(triton::StoreOp op,
   }
 
   ArrayRef<OpFoldResult> dims;
+  ArrayRef<OpFoldResult> offsets;
   mlir::triton::MaskState mstate(useUnsafeMask);
 
   OpBuilder builder(op);
@@ -1804,7 +1856,10 @@ LogicalResult PtrAnalysis::rewriteStoreOp(triton::StoreOp op,
     if (!ptr)
       return failure();
 
+    assert(mstate.hasParallelOffsets() &&
+           "mask offsets must stay parallel to dims");
     dims = mstate.dims;
+    offsets = mstate.offsets;
   }
 
   auto boundaryCheck = op.getBoundaryCheck();
@@ -1814,9 +1869,10 @@ LogicalResult PtrAnalysis::rewriteStoreOp(triton::StoreOp op,
     boundaryCheckToMaskDim(builder, loc, knownPtrs.at(op.getPtr()),
                            boundaryCheck, mstate);
     dims = mstate.dims;
+    offsets = mstate.offsets;
   }
 
-  auto storeOp = builder.create<tts::StoreOp>(loc, ptr, val, dims);
+  auto storeOp = tts::StoreOp::create(builder, loc, ptr, val, dims, offsets);
 
   LLVM_DEBUG({
     llvm::dbgs() << "creating tts::store:\n";
@@ -1854,6 +1910,7 @@ LogicalResult PtrAnalysis::rewriteAtomicRMWOp(triton::AtomicRMWOp op,
   }
 
   ArrayRef<OpFoldResult> dims;
+  ArrayRef<OpFoldResult> offsets;
   mlir::triton::MaskState mstate(useUnsafeMask);
 
   OpBuilder builder(op);
@@ -1870,11 +1927,14 @@ LogicalResult PtrAnalysis::rewriteAtomicRMWOp(triton::AtomicRMWOp op,
     if (!ptr)
       return failure();
 
+    assert(mstate.hasParallelOffsets() &&
+           "mask offsets must stay parallel to dims");
     dims = mstate.dims;
+    offsets = mstate.offsets;
   }
 
-  auto atomicRMWOp = builder.create<tts::AtomicRMWOp>(
-      loc, op.getType(), ptr, val, dims, op.getAtomicRmwOpAttr(),
+  auto atomicRMWOp = tts::AtomicRMWOp::create(builder,
+      loc, op.getType(), ptr, val, dims, offsets, op.getAtomicRmwOpAttr(),
       op.getSemAttr(), op.getScopeAttr());
 
   LLVM_DEBUG({
@@ -1914,7 +1974,7 @@ LogicalResult PtrAnalysis::rewriteAtomicCASOp(triton::AtomicCASOp op) {
 
   OpBuilder builder(op);
 
-  auto atomicCASOp = builder.create<tts::AtomicCASOp>(
+  auto atomicCASOp = tts::AtomicCASOp::create(builder,
       loc, op.getType(), ptr, cmp, val, nullptr, op.getSemAttr(),
       op.getScopeAttr());
 

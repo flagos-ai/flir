@@ -85,7 +85,7 @@ module {
 // CHECK-DAG:       [[VAR_9_:%.+]] = arith.subi [[VAR_8_]], [[CST_3_]] : index
 // CHECK-DAG:       [[VAR_10_:%.+]] = arith.minsi [[VAR_5_]], [[CST_128_]] : index
 // CHECK:           [[VAR_11_:%.+]] = arith.minsi [[VAR_9_]], [[CST_256_]] : index
-// CHECK-DAG:       [[VAR_12_:%.+]] = "tts.load"([[VAR_0_]], [[VAR_10_]], [[VAR_11_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 2, 1>, static_mask_dims = array<i64: -9223372036854775808, -9223372036854775808>}> : (tensor<128x256x!tt.ptr<bf16>>, index, index, bf16) -> tensor<128x256xbf16>
+// CHECK-DAG:       [[VAR_12_:%.+]] = "tts.load"([[VAR_0_]], [[VAR_10_]], [[VAR_11_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 2, 0, 1>, static_mask_dims = array<i64: -9223372036854775808, -9223372036854775808>{{.*}} : (tensor<128x256x!tt.ptr<bf16>>, index, index, bf16) -> tensor<128x256xbf16>
 // CHECK-DAG:       [[VAR_13_:%.+]] = arith.index_cast [[PARAM_2_]] : i32 to index
 // CHECK:           [[VAR_14_:%.+]] = arith.minsi [[VAR_13_]], [[CST_130_]] : index
 // CHECK:           [[VAR_15_:%.+]] = arith.maxsi [[VAR_14_]], [[CST_2_]] : index
@@ -96,6 +96,6 @@ module {
 // CHECK-DAG:       [[VAR_20_:%.+]] = arith.subi [[VAR_19_]], [[CST_3_]] : index
 // CHECK-DAG:       [[VAR_21_:%.+]] = arith.minsi [[VAR_16_]], [[CST_128_]] : index
 // CHECK:           [[VAR_22_:%.+]] = arith.minsi [[VAR_20_]], [[CST_256_]] : index
-// CHECK:           "tts.store"([[VAR_1_]], [[VAR_12_]], [[VAR_21_]], [[VAR_22_]]) <{static_mask_dims = array<i64: -9223372036854775808, -9223372036854775808>}> : (tensor<128x256x!tt.ptr<bf16>>, tensor<128x256xbf16>, index, index) -> ()
+// CHECK:           "tts.store"([[VAR_1_]], [[VAR_12_]], [[VAR_21_]], [[VAR_22_]]) <{{.*}}static_mask_dims = array<i64: -9223372036854775808, -9223372036854775808>{{.*}} : (tensor<128x256x!tt.ptr<bf16>>, tensor<128x256xbf16>, index, index) -> ()
 // CHECK:           tt.return
 // CHECK:         }

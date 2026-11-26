@@ -38,10 +38,10 @@ module {
   }
 }
 
-// CHECK:   %{{.*}} = "tts.load"(%{{.*}}, %{{.*}}) <{operandSegmentSizes = array<i32: 1, 1, 0>, static_mask_dims = array<i64: -9223372036854775808, 1>}> : (tensor<2x1x!tt.ptr<f32>>, index) -> tensor<2x1xf32>
-// CHECK:   %{{.*}} = "tts.load"(%{{.*}}, %{{.*}}) <{operandSegmentSizes = array<i32: 1, 1, 0>, static_mask_dims = array<i64: -9223372036854775808, 1>}> : (tensor<2x1x!tt.ptr<f32>>, index) -> tensor<2x1xf32>
-// CHECK:   "tts.store"(%{{.*}}, %{{.*}}, %{{.*}}) <{static_mask_dims = array<i64: -9223372036854775808, 1>}> : (tensor<2x1x!tt.ptr<f32>>, tensor<2x1xf32>, index) -> ()
-// CHECK:   "tts.store"(%{{.*}}, %{{.*}}, %{{.*}}) <{static_mask_dims = array<i64: -9223372036854775808, 1>}> : (tensor<2x1x!tt.ptr<f32>>, tensor<2x1xf32>, index) -> ()
+// CHECK:   %{{.*}} = "tts.load"(%{{.*}}, %{{.*}}) <{operandSegmentSizes = array<i32: 1, 1, 0, 0>, static_mask_dims = array<i64: -9223372036854775808, 1>{{.*}} : (tensor<2x1x!tt.ptr<f32>>, index) -> tensor<2x1xf32>
+// CHECK:   %{{.*}} = "tts.load"(%{{.*}}, %{{.*}}) <{operandSegmentSizes = array<i32: 1, 1, 0, 0>, static_mask_dims = array<i64: -9223372036854775808, 1>{{.*}} : (tensor<2x1x!tt.ptr<f32>>, index) -> tensor<2x1xf32>
+// CHECK:   "tts.store"(%{{.*}}, %{{.*}}, %{{.*}}) <{{.*}}static_mask_dims = array<i64: -9223372036854775808, 1>{{.*}} : (tensor<2x1x!tt.ptr<f32>>, tensor<2x1xf32>, index) -> ()
+// CHECK:   "tts.store"(%{{.*}}, %{{.*}}, %{{.*}}) <{{.*}}static_mask_dims = array<i64: -9223372036854775808, 1>{{.*}} : (tensor<2x1x!tt.ptr<f32>>, tensor<2x1xf32>, index) -> ()
 
 // Original Triton Function:
 // def test_masked_ld_st(

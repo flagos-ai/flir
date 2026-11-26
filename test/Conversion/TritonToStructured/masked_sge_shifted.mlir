@@ -1,12 +1,10 @@
 // RUN: triton-shared-opt --triton-to-structured --remove-dead-values --canonicalize %s | FileCheck %s
 
 // Mask `(offs - 128) >= 0` has a non-zero lower bound: the valid region is
-// the suffix [128, 256). The prefix-only mask-dims model ([0, dims)) cannot
-// express it, so MaskAnalysis must fail and the load/store must be left
-// untouched for the unstructured gather/scatter lowering, which preserves
-// the mask. Treating the comparison as always-true (previous behavior)
-// drops the mask and emits a full-range DMA that reads below the base
-// pointer.
+// the suffix [128, 256). The interval mask model expresses it as offset 128,
+// size 128, so the load/store must be rewritten to structured tts ops with
+// both mask dims and mask offsets instead of falling back to the
+// unstructured gather/scatter path.
 
 module {
   tt.func @masked_shifted_sge_load(
@@ -28,8 +26,7 @@ module {
     tt.return
   }
 
-  // Control: `offs >= 0` has lower bound 0, still expressible as the full
-  // prefix. The load must still be rewritten to tts.load with mask dims 256.
+  // Control: `offs >= 0` has lower bound 0, valid region is the full prefix.
   tt.func @masked_plain_sge_load(
     %arg0: !tt.ptr<f16>,
     %arg1: !tt.ptr<f16>
@@ -49,8 +46,13 @@ module {
 }
 
 // CHECK-LABEL: tt.func @masked_shifted_sge_load
-// CHECK: tt.load
-// CHECK-NOT: tts.load
+// CHECK: "tts.load"
+// CHECK-SAME: static_mask_dims = array<i64: 128>
+// CHECK-SAME: static_mask_offsets = array<i64: 128>
+// CHECK: "tts.store"
+// CHECK-SAME: static_mask_dims = array<i64: 128>
+// CHECK-SAME: static_mask_offsets = array<i64: 128>
 // CHECK-LABEL: tt.func @masked_plain_sge_load
 // CHECK: "tts.load"
 // CHECK-SAME: static_mask_dims = array<i64: 256>
+// CHECK-SAME: static_mask_offsets = array<i64: 0>

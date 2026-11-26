@@ -46,13 +46,14 @@
 using namespace mlir;
 using namespace triton;
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DECL
+#define GEN_PASS_DEF_TRITONTOSTRUCTURED
 #include "triton-shared/Conversion/TritonToStructured/Passes.h.inc"
 
 namespace {
 
 class TritonToStructuredPass
-    : public TritonToStructuredBase<TritonToStructuredPass> {
+    : public ::impl::TritonToStructuredBase<TritonToStructuredPass> {
 
   static TupleType getStructuredStateTupleType(MLIRContext *context, Type t) {
     SmallVector<Type> tupleTypes{t};
@@ -138,7 +139,7 @@ public:
     // result is still being used by another tt.load or tt.store.
     auto materialize = [](OpBuilder &builder, Type resultType,
                           ValueRange inputs, Location loc) {
-      return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+      return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
           .getResult(0);
     };
 
@@ -153,8 +154,7 @@ public:
                                           TypeRange resultTypes,
                                           ValueRange inputs,
                                           Location loc) -> SmallVector<Value> {
-      return builder
-          .create<UnrealizedConversionCastOp>(loc, resultTypes, inputs.front())
+      return UnrealizedConversionCastOp::create(builder, loc, resultTypes, inputs.front())
           ->getResults();
     });
 
@@ -203,14 +203,19 @@ public:
     // offset_0, offset_1,..., stride_0, stride_1,...} type back to the "pointer
     // tuple type".
     //
-    // Because we actually want to get rid of the tuple type, return `inputs[0]`
-    // which corresponds to a "triton pointer type". This approach will work as
-    // intended because the ops that currently take "pointer tuple type" are
-    // `unrealized_conversion_cast` ops which will get removed below during
-    // reconcile-unrealized-conversion-casts.
+    // Because we actually want to get rid of the tuple type, a single input
+    // that already carries the expected type can be forwarded directly.
+    // Otherwise materialize the value through an unrealized cast so the
+    // produced type matches what MLIR expects; ReconcileUnrealizedCasts
+    // removes these casts later.
     auto materialize = [](OpBuilder &builder, Type resultType,
-                          ValueRange inputs,
-                          Location loc) { return inputs[0]; };
+                          ValueRange inputs, Location loc) -> Value {
+      if (inputs.size() == 1 && inputs.front().getType() == resultType)
+        return inputs.front();
+      return UnrealizedConversionCastOp::create(builder, loc, resultType,
+                                                inputs)
+          .getResult(0);
+    };
 #if LLVM_VERSION_MAJOR < 22
     converter.addArgumentMaterialization(materialize);
 #endif
@@ -225,7 +230,7 @@ public:
     converter.addTargetMaterialization([](OpBuilder &builder,
                                           TypeRange resultTypes,
                                           ValueRange inputs, Location loc) {
-      auto placeholder = builder.create<tts::GetStructuredStateOp>(
+      auto placeholder = tts::GetStructuredStateOp::create(builder,
           loc, inputs.front().getDefiningOp()->getOperand(0));
       assert(llvm::equal(placeholder.getResultTypes(), resultTypes));
       return placeholder.getResults();
@@ -245,6 +250,34 @@ public:
 #endif
       return failure();
     }
+
+    // Fold cast(cast(%ptr, %idx) -> tuple) -> ptr back to %ptr; the multi-input
+    // source cannot be reconciled by ReconcileUnrealizedCasts.
+    SmallVector<UnrealizedConversionCastOp> deadCasts;
+    moduleOp.walk([&](UnrealizedConversionCastOp cast) {
+      if (cast.getInputs().size() != 1 || cast.getResults().size() != 1)
+        return;
+      auto inner =
+          cast.getInputs().front().getDefiningOp<UnrealizedConversionCastOp>();
+      if (!inner || inner.getInputs().size() < 2 ||
+          inner.getResults().size() != 1)
+        return;
+      Value match;
+      int matches = 0;
+      for (Value input : inner.getInputs()) {
+        if (input.getType() == cast.getResult(0).getType()) {
+          match = input;
+          ++matches;
+        }
+      }
+      // Only fold an unambiguous projection.
+      if (matches != 1)
+        return;
+      cast.getResult(0).replaceAllUsesWith(match);
+      deadCasts.push_back(cast);
+    });
+    for (auto cast : deadCasts)
+      cast.erase();
 
     // Note:
     // Be careful not to run canonicalization here, because the

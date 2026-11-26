@@ -75,14 +75,14 @@ Value ofrToIndexValue(const OpFoldResult ofr, const Location loc,
   if (Value val = dyn_cast<Value>(ofr)) {
     assert(val.getType().isIntOrIndex());
     if (!val.getType().isIndex()) {
-      val = b.create<arith::IndexCastOp>(loc, b.getIndexType(), val);
+      val = arith::IndexCastOp::create(b, loc, b.getIndexType(), val);
     }
     return val;
   }
 
   auto intVal = getIntAttr(ofr);
   if (intVal.has_value()) {
-    return b.create<arith::ConstantOp>(loc, b.getIndexAttr(intVal.value()));
+    return arith::ConstantOp::create(b, loc, b.getIndexAttr(intVal.value()));
   }
   llvm_unreachable("Unexpected OpFoldResult state");
   return nullptr;
@@ -115,7 +115,7 @@ OpFoldResult addOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = dyn_cast<Value>(lhs);
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   } else {
     assert(isa<IndexType>(lhsValue.getType()));
@@ -124,13 +124,13 @@ OpFoldResult addOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto rhsValue = dyn_cast<Value>(rhs);
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   } else {
     assert(isa<IndexType>(lhsValue.getType()));
   }
 
-  return b.create<arith::AddIOp>(loc, lhsValue, rhsValue).getResult();
+  return arith::AddIOp::create(b, loc, lhsValue, rhsValue).getResult();
 }
 
 OpFoldResult subOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
@@ -150,18 +150,18 @@ OpFoldResult subOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = dyn_cast<Value>(lhs);
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = dyn_cast<Value>(rhs);
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto sumOp = b.create<arith::SubIOp>(loc, lhsValue, rhsValue);
+  auto sumOp = arith::SubIOp::create(b, loc, lhsValue, rhsValue);
   return sumOp.getResult();
 }
 
@@ -200,14 +200,14 @@ OpFoldResult mulOFRValue(const OpFoldResult lhs, const Value rhs,
   // 1. if lhs is constant but rhs is not
   if (lhsIntAttr && !rhsIsConst) {
     auto lhsConstOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
-    auto mulOp = b.create<arith::MulIOp>(loc, lhsConstOp.getResult(), rhs);
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
+    auto mulOp = arith::MulIOp::create(b, loc, lhsConstOp.getResult(), rhs);
     return mulOp.getResult();
   }
 
   // 2. if lhs is not constant
   assert(!lhsIntAttr);
-  auto mulOp = b.create<arith::MulIOp>(loc, cast<Value>(lhs), rhs);
+  auto mulOp = arith::MulIOp::create(b, loc, cast<Value>(lhs), rhs);
   return mulOp.getResult();
 }
 //////ASCEND
@@ -228,18 +228,18 @@ OpFoldResult divOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = lhs.dyn_cast<Value>();
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = rhs.dyn_cast<Value>();
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto divOp = b.create<arith::DivSIOp>(loc, lhsValue, rhsValue);
+  auto divOp = arith::DivSIOp::create(b, loc, lhsValue, rhsValue);
   return divOp.getResult();
 }
 
@@ -260,18 +260,18 @@ OpFoldResult remOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = lhs.dyn_cast<Value>();
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = rhs.dyn_cast<Value>();
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto remOp = b.create<arith::RemSIOp>(loc, lhsValue, rhsValue);
+  auto remOp = arith::RemSIOp::create(b, loc, lhsValue, rhsValue);
   return remOp.getResult();
 }
 
@@ -283,7 +283,7 @@ OpFoldResult mulOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   // both lhs and rhs are constants, return result directly
   if (lhsIntAttr && rhsIntAttr)
     return b.getIndexAttr(lhsIntAttr.value() * rhsIntAttr.value());
-  
+
   // shortcuts for special cases
   if (lhsIntAttr) {
     if (lhsIntAttr.value() == 0)
@@ -303,18 +303,18 @@ OpFoldResult mulOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = dyn_cast<Value>(lhs);
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = dyn_cast<Value>(rhs);
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto mulOp = b.create<arith::MulIOp>(loc, lhsValue, rhsValue);
+  auto mulOp = arith::MulIOp::create(b, loc, lhsValue, rhsValue);
   return mulOp.getResult();
 }
 ///////ASCNED
@@ -331,18 +331,18 @@ OpFoldResult minOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = dyn_cast<Value>(lhs);
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = dyn_cast<Value>(rhs);
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto minOp = b.create<arith::MinSIOp>(loc, lhsValue, rhsValue);
+  auto minOp = arith::MinSIOp::create(b, loc, lhsValue, rhsValue);
   return minOp.getResult();
 }
 
@@ -359,18 +359,18 @@ OpFoldResult maxOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto lhsValue = dyn_cast<Value>(lhs);
   if (lhsIntAttr) {
     auto lhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(lhsIntAttr.value()));
     lhsValue = lhsOp.getResult();
   }
 
   auto rhsValue = dyn_cast<Value>(rhs);
   if (rhsIntAttr) {
     auto rhsOp =
-        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+        arith::ConstantOp::create(b, loc, b.getIndexAttr(rhsIntAttr.value()));
     rhsValue = rhsOp.getResult();
   }
 
-  auto maxOp = b.create<arith::MaxSIOp>(loc, lhsValue, rhsValue);
+  auto maxOp = arith::MaxSIOp::create(b, loc, lhsValue, rhsValue);
   return maxOp.getResult();
 }
 
@@ -409,8 +409,8 @@ OpFoldResult compareOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
   auto trueValue = ofrToIndexValue(trueOFR, loc, b);
   auto falseValue = ofrToIndexValue(falseOFR, loc, b);
 
-  auto cmpOp = b.create<arith::CmpIOp>(loc, pred, lhsValue, rhsValue);
-  auto selectOp = b.create<arith::SelectOp>(loc, cmpOp, trueValue, falseValue);
+  auto cmpOp = arith::CmpIOp::create(b, loc, pred, lhsValue, rhsValue);
+  auto selectOp = arith::SelectOp::create(b, loc, cmpOp, trueValue, falseValue);
   return selectOp.getResult();
 }
 } // namespace mlir

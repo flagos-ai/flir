@@ -48,37 +48,34 @@ module {
     tt.return
   }
 }
-
-// CHECK-DAG:   [[MAP_0_:#.+]] = affine_map<(d0, d1) -> (d0, d1)>
-// CHECK-LABEL:  func.func @kernel
-// CHECK-SAME:   ([[PARAM_0_:%.+]]: memref<*xbf16>, [[PARAM_1_:%.+]]: memref<*xbf16>, [[PARAM_2_:%.+]]: memref<*xbf16>, [[PARAM_3_:%.+]]: i32, [[PARAM_4_:%.+]]: i32, [[PARAM_5_:%.+]]: i32, [[PARAM_6_:%.+]]: i32, [[PARAM_7_:%.+]]: i32, [[PARAM_8_:%.+]]: i32) {
-// CHECK-DAG:       [[CST_0_dot_000000_:%.+]] = arith.constant 0.000000e+00 : bf16
-// CHECK-DAG:       [[CST_256_:%.+]] = arith.constant 256 : index
-// CHECK-DAG:       [[CST_128_:%.+]] = arith.constant 128 : index
-// CHECK-NOT: separator of consecutive DAGs
-// CHECK-DAG:       [[VAR_reinterpret_cast_:%.+]] = memref.reinterpret_cast [[PARAM_0_]] to offset: [0], sizes: [128, 64], strides: {{.}}[[CST_128_]], 1] : memref<*xbf16> to memref<128x64xbf16, strided<[?, 1]>>
-// CHECK-DAG:       [[RES_:%.+]] = memref.alloc() : memref<128x64xbf16>
-// CHECK:           memref.copy [[VAR_reinterpret_cast_]], [[RES_]] : memref<128x64xbf16, strided<[?, 1]>> to memref<128x64xbf16>
-// CHECK-DAG:       [[VAR_0_:%.+]] = bufferization.to_tensor [[RES_]] restrict writable : memref<128x64xbf16>
-// CHECK-DAG:       [[VAR_reinterpret_cast_0_:%.+]] = memref.reinterpret_cast [[PARAM_1_]] to offset: [0], sizes: [256, 64], strides: [1, [[CST_256_]]{{.}} : memref<*xbf16> to memref<256x64xbf16, strided<[1, ?]>>
-// CHECK-DAG:       [[RES_1_:%.+]] = memref.alloc() : memref<256x64xbf16>
-// CHECK:           memref.copy [[VAR_reinterpret_cast_0_]], [[RES_1_]] : memref<256x64xbf16, strided<[1, ?]>> to memref<256x64xbf16>
-// CHECK-DAG:       [[VAR_1_:%.+]] = bufferization.to_tensor [[RES_1_]] restrict writable : memref<256x64xbf16>
-// CHECK-DAG:       [[VAR_2_:%.+]] = tensor.empty() : tensor<64x256xbf16>
-// CHECK-NOT: separator of consecutive DAGs
-// CHECK-DAG:       [[VAR_transposed_:%.+]] = linalg.transpose ins([[VAR_1_]] : tensor<256x64xbf16>) outs([[VAR_2_]] : tensor<64x256xbf16>) permutation = [1, 0]
-// CHECK-DAG:       [[VAR_reinterpret_cast_2_:%.+]] = memref.reinterpret_cast [[PARAM_2_]] to offset: [0], sizes: [128, 256], strides: {{.}}[[CST_256_]], 1] : memref<*xbf16> to memref<128x256xbf16, strided<[?, 1]>>
-// CHECK-DAG:       [[RES_2_:%.+]] = memref.alloc() : memref<128x256xbf16>
-// CHECK:           memref.copy [[VAR_reinterpret_cast_2_]], [[RES_2_]] : memref<128x256xbf16, strided<[?, 1]>> to memref<128x256xbf16>
-// CHECK-DAG:       [[VAR_3_:%.+]] = bufferization.to_tensor [[RES_2_]] restrict writable : memref<128x256xbf16>
-// CHECK-DAG:       [[VAR_4_:%.+]] = tensor.empty() : tensor<128x256xbf16>
-// CHECK:           [[VAR_5_:%.+]] = linalg.fill ins([[CST_0_dot_000000_]] : bf16) outs([[VAR_4_]] : tensor<128x256xbf16>) -> tensor<128x256xbf16>
-// CHECK:           [[VAR_6_:%.+]] = linalg.matmul ins([[VAR_0_]], [[VAR_transposed_]] : tensor<128x64xbf16>, tensor<64x256xbf16>) outs([[VAR_5_]] : tensor<128x256xbf16>) -> tensor<128x256xbf16>
-// CHECK:           [[VAR_7_:%.+]] = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins([[VAR_3_]], [[VAR_6_]] : tensor<128x256xbf16>, tensor<128x256xbf16>) outs([[VAR_3_]] : tensor<128x256xbf16>) {
-// CHECK:           ^bb0([[in_:.+]]: bf16, [[in_1:.+]]: bf16, [[out_:.+]]: bf16):
-// CHECK:             [[VAR_8_:%.+]] = arith.addf [[in_]], [[in_1]] : bf16
-// CHECK:             linalg.yield [[VAR_8_]] : bf16
-// CHECK:           } -> tensor<128x256xbf16>
-// CHECK:           bufferization.materialize_in_destination [[VAR_7_]] in writable [[VAR_reinterpret_cast_2_]]
-// CHECK:           return
-// CHECK:         }
+// CHECK: #map = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK: module {
+// CHECK:   func.func @kernel(%arg0: memref<*xbf16>, %arg1: memref<*xbf16>, %arg2: memref<*xbf16>, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) {
+// CHECK:     %cst = arith.constant 0.000000e+00 : bf16
+// CHECK:     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [128, 64], strides: [128, 1] : memref<*xbf16> to memref<128x64xbf16, strided<[128, 1]>>
+// CHECK:     %alloc = memref.alloc() : memref<128x64xbf16>
+// CHECK:     memref.copy %reinterpret_cast, %alloc : memref<128x64xbf16, strided<[128, 1]>> to memref<128x64xbf16>
+// CHECK:     %0 = bufferization.to_tensor %alloc restrict writable : memref<128x64xbf16> to tensor<128x64xbf16>
+// CHECK:     %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256, 64], strides: [1, 256] : memref<*xbf16> to memref<256x64xbf16, strided<[1, 256]>>
+// CHECK:     %alloc_1 = memref.alloc() : memref<256x64xbf16>
+// CHECK:     memref.copy %reinterpret_cast_0, %alloc_1 : memref<256x64xbf16, strided<[1, 256]>> to memref<256x64xbf16>
+// CHECK:     %1 = bufferization.to_tensor %alloc_1 restrict writable : memref<256x64xbf16> to tensor<256x64xbf16>
+// CHECK:     %2 = tensor.empty() : tensor<64x256xbf16>
+// CHECK:     %transposed = linalg.transpose ins(%1 : tensor<256x64xbf16>) outs(%2 : tensor<64x256xbf16>) permutation = [1, 0]
+// CHECK:     %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [128, 256], strides: [256, 1] : memref<*xbf16> to memref<128x256xbf16, strided<[256, 1]>>
+// CHECK:     %cast = memref.cast %reinterpret_cast_2 : memref<128x256xbf16, strided<[256, 1]>> to memref<128x256xbf16, strided<[?, 1]>>
+// CHECK:     %alloc_3 = memref.alloc() : memref<128x256xbf16>
+// CHECK:     memref.copy %reinterpret_cast_2, %alloc_3 : memref<128x256xbf16, strided<[256, 1]>> to memref<128x256xbf16>
+// CHECK:     %3 = bufferization.to_tensor %alloc_3 restrict writable : memref<128x256xbf16> to tensor<128x256xbf16>
+// CHECK:     %4 = tensor.empty() : tensor<128x256xbf16>
+// CHECK:     %5 = linalg.fill ins(%cst : bf16) outs(%4 : tensor<128x256xbf16>) -> tensor<128x256xbf16>
+// CHECK:     %6 = linalg.matmul ins(%0, %transposed : tensor<128x64xbf16>, tensor<64x256xbf16>) outs(%5 : tensor<128x256xbf16>) -> tensor<128x256xbf16>
+// CHECK:     %7 = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins(%3, %6 : tensor<128x256xbf16>, tensor<128x256xbf16>) outs(%3 : tensor<128x256xbf16>) {
+// CHECK:     ^bb0(%in: bf16, %in_4: bf16, %out: bf16):
+// CHECK:       %8 = arith.addf %in, %in_4 : bf16
+// CHECK:       linalg.yield %8 : bf16
+// CHECK:     } -> tensor<128x256xbf16>
+// CHECK:     bufferization.materialize_in_destination %7 in writable %cast : (tensor<128x256xbf16>, memref<128x256xbf16, strided<[?, 1]>>) -> ()
+// CHECK:     return
+// CHECK:   }
+// CHECK: }

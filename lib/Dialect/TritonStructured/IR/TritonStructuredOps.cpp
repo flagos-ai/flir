@@ -46,14 +46,14 @@ Value getScalarValue(Value operand, Location loc, OpBuilder &builder) {
                   if (auto shapedType = dyn_cast<ShapedType>(resType)) {
                     resType = shapedType.getElementType();
                   }
-                  return builder.create<arith::SIToFPOp>(loc, resType, src);
+                  return arith::SIToFPOp::create(builder, loc, resType, src);
                 })
                 .Case<arith::TruncFOp>([&](Operation *op) {
                   auto resType = op->getResults()[0].getType();
                   if (auto shapedType = dyn_cast<ShapedType>(resType)) {
                     resType = shapedType.getElementType();
                   }
-                  return builder.create<arith::TruncFOp>(loc, resType, src);
+                  return arith::TruncFOp::create(builder, loc, resType, src);
                 })
                 .Default([](Operation *op) {
                   llvm_unreachable("unsupported op in generating ");
@@ -204,11 +204,17 @@ LogicalResult MakeGatherScatterTensorPtrOp::verify() {
 }
 
 void LoadOp::build(OpBuilder &b, OperationState &state, Value ptr,
-                   ArrayRef<OpFoldResult> dims, Value other) {
+                   ArrayRef<OpFoldResult> dims,
+                   ArrayRef<OpFoldResult> offsets, Value other) {
   SmallVector<int64_t> staticDims;
   SmallVector<Value> dynamicDims;
 
   dispatchIndexOpFoldResults(dims, dynamicDims, staticDims);
+
+  SmallVector<int64_t> staticOffsets;
+  SmallVector<Value> dynamicOffsets;
+
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
 
   // non-block pointer type
   auto ptrTensorType = dyn_cast<RankedTensorType>(ptr.getType());
@@ -227,21 +233,29 @@ void LoadOp::build(OpBuilder &b, OperationState &state, Value ptr,
                                     tensorType.getElementType());
   }
   build(b, state, resType, ptr, dynamicDims, b.getDenseI64ArrayAttr(staticDims),
-        other);
+        dynamicOffsets, b.getDenseI64ArrayAttr(staticOffsets), other);
 }
 
 void StoreOp::build(OpBuilder &b, OperationState &state, Value ptr, Value value,
-                    ArrayRef<OpFoldResult> dims) {
+                    ArrayRef<OpFoldResult> dims,
+                    ArrayRef<OpFoldResult> offsets) {
   SmallVector<int64_t> staticDims;
   SmallVector<Value> dynamicDims;
 
   dispatchIndexOpFoldResults(dims, dynamicDims, staticDims);
 
-  build(b, state, ptr, value, dynamicDims, b.getDenseI64ArrayAttr(staticDims));
+  SmallVector<int64_t> staticOffsets;
+  SmallVector<Value> dynamicOffsets;
+
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
+
+  build(b, state, ptr, value, dynamicDims, b.getDenseI64ArrayAttr(staticDims),
+        dynamicOffsets, b.getDenseI64ArrayAttr(staticOffsets));
 }
 
 void AtomicRMWOp::build(OpBuilder &b, OperationState &state, mlir::Type result,
                         Value ptr, Value value, ArrayRef<OpFoldResult> dims,
+                        ArrayRef<OpFoldResult> offsets,
                         triton::RMWOpAttr atomicRMWOp,
                         triton::MemSemanticAttr sem,
                         triton::MemSyncScopeAttr scope) {
@@ -250,8 +264,14 @@ void AtomicRMWOp::build(OpBuilder &b, OperationState &state, mlir::Type result,
 
   dispatchIndexOpFoldResults(dims, dynamicDims, staticDims);
 
+  SmallVector<int64_t> staticOffsets;
+  SmallVector<Value> dynamicOffsets;
+
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
+
   build(b, state, result, ptr, value, dynamicDims,
-        b.getDenseI64ArrayAttr(staticDims), atomicRMWOp, sem, scope);
+        b.getDenseI64ArrayAttr(staticDims), dynamicOffsets,
+        b.getDenseI64ArrayAttr(staticOffsets), atomicRMWOp, sem, scope);
 }
 
 LogicalResult GetStructuredStateOp::verify() {

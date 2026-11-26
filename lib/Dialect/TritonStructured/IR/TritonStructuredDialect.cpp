@@ -91,7 +91,7 @@ struct TTSLoadContiguousPattern : public OpRewritePattern<tts::LoadOp> {
 
     // TODO: Now not used order
     // Create the new MakeTensorPtrOp with swapped dimensions
-    auto newMakeTensorPtrOp = rewriter.create<tts::MakeTensorPtrOp>(
+    auto newMakeTensorPtrOp = tts::MakeTensorPtrOp::create(rewriter,
         op->getLoc(), makeTensorPtrOp.getBase(), newSizes, newStrides,
         newOffsets, newShape, order);
 
@@ -100,13 +100,21 @@ struct TTSLoadContiguousPattern : public OpRewritePattern<tts::LoadOp> {
     SmallVector<OpFoldResult> newDims =
         op.hasMask() ? SmallVector<OpFoldResult>{dims[1], dims[0]} : dims;
 
-    auto newLoadOp = rewriter.create<tts::LoadOp>(
-        op->getLoc(), newMakeTensorPtrOp, newDims, op.getOther());
+    auto offsets = op.getMixedMaskOffsets();
+    // Offsets are guaranteed parallel to dims (rank-2) by MaskAnalysis.
+    assert(!op.hasMask() || offsets.size() == 2);
+    SmallVector<OpFoldResult> newMaskOffsets =
+        op.hasMask() ? SmallVector<OpFoldResult>{offsets[1], offsets[0]}
+                     : offsets;
 
-    Value init = rewriter.create<tensor::EmptyOp>(
+    auto newLoadOp = tts::LoadOp::create(rewriter,
+        op->getLoc(), newMakeTensorPtrOp, newDims, newMaskOffsets,
+        op.getOther());
+
+    Value init = tensor::EmptyOp::create(rewriter,
         op->getLoc(), tensorType.getShape(), tensorType.getElementType());
 
-    auto transposeOp = rewriter.create<linalg::TransposeOp>(
+    auto transposeOp = linalg::TransposeOp::create(rewriter,
         op->getLoc(), newLoadOp, init,
         rewriter.getDenseI64ArrayAttr(
             {1, 0})); // Permutation to swap dimensions

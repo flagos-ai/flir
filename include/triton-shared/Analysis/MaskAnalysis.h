@@ -35,7 +35,7 @@ struct dimInfo {
   OpFoldResult div;
   OpFoldResult shape;
   bool isSlt;
-  Value rhs; // rhs value of CmpIOp 
+  Value rhs; // rhs value of CmpIOp
   bool isRealDim;
   int64_t dim;
   dimInfo() : isSlt(false), isRealDim(false), dim(0) {}
@@ -70,8 +70,12 @@ struct dimInfo {
 // assume range comparison can only be done on 1 dimension at a time (and
 // results of range comparions across dimensions can be combined), hence start
 // and end are not vectors. dims represents the real access size for ld/st
-// (instead of the tensor/memref size specified by the IR). scalar is a shortcut
-// used when the entire state contains a single scalar value.
+// (instead of the tensor/memref size specified by the IR). offsets (parallel
+// to dims) is the per-dimension start of the valid region: the valid interval
+// in dim i is [offsets[i], offsets[i] + dims[i]). An empty offsets vector
+// means all zeros (valid prefix), which keeps pre-interval consumers working.
+// scalar is a shortcut used when the entire state contains a single scalar
+// value.
 //
 // The general lifetime of this data structure is roughly:
 // 1. A range is created by make_range and optionally operated on by addi w/
@@ -79,9 +83,9 @@ struct dimInfo {
 // and end are populated, or (2) scalar is populated. Only one of the dimensions
 // (that contains the range) can have dim > 1.
 // 2. Result from step 1 is compared with a another MaskState that represents a
-// scalar value. The resulting state only has dims populated.
+// scalar value. The resulting state has dims (and possibly offsets) populated.
 // 3. Optionally, result from step 2 can be broadcasted and anded with other
-// results from step 2. The resulting state only has dims populated.
+// results from step 2. AND-ing two mask states intersects their intervals.
 //
 // Example of creating 2D mask:
 //  mask = (rows[:, None] < M) & (cols[None, :] < N)
@@ -106,6 +110,7 @@ struct MaskState {
   OpFoldResult start;
   OpFoldResult end;
   SmallVector<OpFoldResult> dims;
+  SmallVector<OpFoldResult> offsets;
   OpFoldResult scalar;
   const bool useUnsafeMask;
   ///ASCEND
@@ -117,6 +122,10 @@ struct MaskState {
   MaskState(bool useUnsafeMask = false) : useUnsafeMask(useUnsafeMask) {}
 
   int64_t getRank() const { return dims.size(); }
+
+  // Offsets are always parallel to dims: missing entries are padded with 0
+  // (prefix interval) by every parse path.
+  bool hasParallelOffsets() const { return offsets.size() == dims.size(); }
 
   bool hasNonContinuousDim() const { return !nonContinuousDim.empty(); }
 
@@ -157,7 +166,7 @@ struct MaskState {
                                        OpBuilder &builder) const;
 
 
-  void eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter);  
+  void eraseInsertedOps(Operation *rawOp, PatternRewriter &rewriter);
 
 private:
   // -------
@@ -246,7 +255,7 @@ private:
   // dimension that contains the range.
   LogicalResult parseExpandDims(triton::ExpandDimsOp expandDimsOp,
                                 const Location loc, OpBuilder &builder);
-///////////////////ASCEND  
+///////////////////ASCEND
   LogicalResult parseRemsi(arith::RemSIOp remsiOp,
                                          const Location loc,
                                          OpBuilder &builder);

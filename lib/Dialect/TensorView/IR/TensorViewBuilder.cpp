@@ -39,11 +39,11 @@ static Value createBaseView(OpBuilder &b, Location loc, Value basePtr,
   for (unsigned d = 0; d < rank; ++d) {
     if (strideStatic[d] == ShapedType::kDynamic) {
       strideOperands.push_back(
-          b.create<arith::IndexCastOp>(loc, b.getIndexType(), strideDyn[d]));
+          arith::IndexCastOp::create(b, loc, b.getIndexType(), strideDyn[d]));
       strideTy.push_back(ShapedType::kDynamic);
     } else {
       strideOperands.push_back(
-          b.create<arith::ConstantIndexOp>(loc, strideStatic[d]));
+          arith::ConstantIndexOp::create(b, loc, strideStatic[d]));
       strideTy.push_back(strideStatic[d]);
     }
   }
@@ -52,17 +52,16 @@ static Value createBaseView(OpBuilder &b, Location loc, Value basePtr,
   for (unsigned d = 0; d < rank; ++d) {
     if (d < extent.size() && extent[d])
       sizeOperands.push_back(
-          b.create<arith::IndexCastOp>(loc, b.getIndexType(), extent[d]));
+          arith::IndexCastOp::create(b, loc, b.getIndexType(), extent[d]));
     else
-      sizeOperands.push_back(b.create<arith::ConstantIndexOp>(
+      sizeOperands.push_back(arith::ConstantIndexOp::create(b,
           loc, std::numeric_limits<int64_t>::max()));
   }
 
   SmallVector<int64_t> dynShape(rank, ShapedType::kDynamic);
   auto baseTy = tv::TensorViewType::get(dynShape, elementType, strideTy,
                                         /*encoding=*/Attribute());
-  return b
-      .create<tv::MakeTensorViewOp>(loc, baseTy, basePtr, sizeOperands,
+  return tv::MakeTensorViewOp::create(b, loc, baseTy, basePtr, sizeOperands,
                                     strideOperands)
       .getResult();
 }
@@ -112,7 +111,7 @@ Value createPartitionView(OpBuilder &b, Location loc, Value baseView,
   auto encoding =
       tv::PartitionViewAttr::get(b.getContext(), tile, paddingValue);
   auto resultType = getEncodedViewType(baseView, encoding);
-  return b.create<tv::MakePartitionViewOp>(loc, resultType, baseView)
+  return tv::MakePartitionViewOp::create(b, loc, resultType, baseView)
       .getResult();
 }
 
@@ -123,7 +122,7 @@ Value createStridedView(OpBuilder &b, Location loc, Value baseView,
   auto encoding = tv::StridedViewAttr::get(b.getContext(), tile,
                                            traversalStrides, paddingValue);
   auto resultType = getEncodedViewType(baseView, encoding);
-  return b.create<tv::MakeStridedViewOp>(loc, resultType, baseView).getResult();
+  return tv::MakeStridedViewOp::create(b, loc, resultType, baseView).getResult();
 }
 
 Value createGatherScatterView(OpBuilder &b, Location loc, Value baseView,
@@ -133,7 +132,7 @@ Value createGatherScatterView(OpBuilder &b, Location loc, Value baseView,
   auto encoding = tv::GatherScatterViewAttr::get(
       b.getContext(), tile, sparseDims, paddingValue, boundsCheck);
   auto resultType = getEncodedViewType(baseView, encoding);
-  return b.create<tv::MakeGatherScatterViewOp>(loc, resultType, baseView)
+  return tv::MakeGatherScatterViewOp::create(b, loc, resultType, baseView)
       .getResult();
 }
 

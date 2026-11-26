@@ -87,10 +87,10 @@ static void collectAndLeaves(Value mask, SmallVectorImpl<Value> &leaves,
     if (auto innerAnd = broadcastOp.getSrc().getDefiningOp<arith::AndIOp>()) {
       Type dstType = mask.getType();
       Value broadcastA =
-          rewriter.create<triton::BroadcastOp>(loc, dstType, innerAnd.getLhs())
+          triton::BroadcastOp::create(rewriter, loc, dstType, innerAnd.getLhs())
               .getResult();
       Value broadcastB =
-          rewriter.create<triton::BroadcastOp>(loc, dstType, innerAnd.getRhs())
+          triton::BroadcastOp::create(rewriter, loc, dstType, innerAnd.getRhs())
               .getResult();
       collectAndLeaves(broadcastA, leaves, loc, rewriter);
       collectAndLeaves(broadcastB, leaves, loc, rewriter);
@@ -138,13 +138,13 @@ static MaskDecomposition decomposeAndMask(Operation *op, Value mask,
   Value contMask = nullptr;
   for (Value v : contLeaves)
     contMask =
-        contMask ? rewriter.create<arith::AndIOp>(loc, contMask, v).getResult()
+        contMask ? arith::AndIOp::create(rewriter, loc, contMask, v).getResult()
                  : v;
 
   Value discMask = nullptr;
   for (Value v : discLeaves)
     discMask =
-        discMask ? rewriter.create<arith::AndIOp>(loc, discMask, v).getResult()
+        discMask ? arith::AndIOp::create(rewriter, loc, discMask, v).getResult()
                  : v;
 
   return {contMask, discMask};
@@ -175,8 +175,8 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
       Value basePtr = info.getPtr();
       Value totalOffset = info.getOffset();
 
-      rewriter.create<triton::ascend::IndirectStoreOp>(loc, basePtr,
-                                                       totalOffset, src, mask);
+      triton::ascend::IndirectStoreOp::create(rewriter, loc, basePtr,
+                                              totalOffset, src, mask);
       rewriter.eraseOp(op);
       return success();
     }
@@ -189,18 +189,18 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
       // insert sync_block_lock
       auto lockVar = MemOpConverter::createSyncBlockLockVar(rewriter, loc);
       if (enableSyncBlockLockFlag) {
-        rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+        hivm::SyncBlockLockOp::create(rewriter, loc, lockVar);
       }
-      auto safeLoad = rewriter.create<triton::LoadOp>(
-          loc, dst, contMask, op.getCache(), op.getEvict(), false);
-      auto selOp = rewriter.create<arith::SelectOp>(loc, discMask, src,
-                                                    safeLoad.getResult());
-      auto newStore = rewriter.create<triton::StoreOp>(
-          loc, dst, selOp, contMask, op.getCache(), op.getEvict());
+      auto safeLoad = triton::LoadOp::create(
+          rewriter, loc, dst, contMask, op.getCache(), op.getEvict(), false);
+      auto selOp = arith::SelectOp::create(rewriter, loc, discMask, src,
+                                           safeLoad.getResult());
+      auto newStore = triton::StoreOp::create(
+          rewriter, loc, dst, selOp, contMask, op.getCache(), op.getEvict());
       newStore->setAttr(ConverterUtils::discreteMaskAttrName,
                         UnitAttr::get(rewriter.getContext()));
       if (enableSyncBlockLockFlag) {
-        rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+        hivm::SyncBlockUnlockOp::create(rewriter, loc, lockVar);
       }
       rewriter.replaceOp(op, newStore);
       return success();
@@ -210,18 +210,18 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
     // insert sync_block_lock
     auto lockVar = MemOpConverter::createSyncBlockLockVar(rewriter, loc);
     if (enableSyncBlockLockFlag) {
-      rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+      hivm::SyncBlockLockOp::create(rewriter, loc, lockVar);
     }
-    auto loadFromDstOp = rewriter.create<triton::LoadOp>(
-        loc, dst, op.getCache(), op.getEvict(), false);
-    auto selOp = rewriter.create<arith::SelectOp>(loc, mask, src,
-                                                  loadFromDstOp.getResult());
-    auto newStore = rewriter.create<triton::StoreOp>(
-        loc, dst, selOp, op.getCache(), op.getEvict());
+    auto loadFromDstOp = triton::LoadOp::create(
+        rewriter, loc, dst, op.getCache(), op.getEvict(), false);
+    auto selOp = arith::SelectOp::create(rewriter, loc, mask, src,
+                                         loadFromDstOp.getResult());
+    auto newStore = triton::StoreOp::create(rewriter, loc, dst, selOp,
+                                            op.getCache(), op.getEvict());
     newStore->setAttr(ConverterUtils::discreteMaskAttrName,
                       UnitAttr::get(rewriter.getContext()));
     if (enableSyncBlockLockFlag) {
-      rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+      hivm::SyncBlockUnlockOp::create(rewriter, loc, lockVar);
     }
     rewriter.replaceOp(op, newStore);
     return success();
@@ -259,14 +259,15 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
         }
         other = *constant;
       }
-      auto safeLoad = rewriter.create<triton::LoadOp>(
-          loc, ptr, contMask, op.getCache(), op.getEvict(), op.getIsVolatile());
+      auto safeLoad =
+          triton::LoadOp::create(rewriter, loc, ptr, contMask, op.getCache(),
+                                 op.getEvict(), op.getIsVolatile());
       // Use combined mask to select the result, avoid the uninitialized memory
       // access.
       auto combinedMask =
-          rewriter.create<arith::AndIOp>(loc, contMask, discMask);
-      auto discreteMaskOp = rewriter.create<arith::SelectOp>(
-          loc, combinedMask, safeLoad.getResult(), other);
+          arith::AndIOp::create(rewriter, loc, contMask, discMask);
+      auto discreteMaskOp = arith::SelectOp::create(
+          rewriter, loc, combinedMask, safeLoad.getResult(), other);
       rewriter.replaceOp(op, discreteMaskOp);
       return success();
     }
@@ -280,10 +281,10 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
       other = *constant;
     }
 
-    auto newLoadOp = rewriter.create<triton::LoadOp>(
-        loc, ptr, op.getCache(), op.getEvict(), op.getIsVolatile());
+    auto newLoadOp = triton::LoadOp::create(rewriter, loc, ptr, op.getCache(),
+                                            op.getEvict(), op.getIsVolatile());
     auto discreteMaskOp =
-        rewriter.create<arith::SelectOp>(loc, mask, newLoadOp, other);
+        arith::SelectOp::create(rewriter, loc, mask, newLoadOp, other);
     rewriter.replaceOp(op, discreteMaskOp);
     return success();
   }
@@ -330,10 +331,10 @@ struct DiscreteMaskAtomicConversion
     if (failed(fill))
       op->emitError("Unsupported atomic operation.");
 
-    auto maskedValue = rewriter.create<arith::SelectOp>(loc, mask, src, *fill);
-    auto newAtomicOp = rewriter.create<mlir::triton::AtomicRMWOp>(
-        loc, src.getType(), rmwOp, ptr, maskedValue, mlir::Value(), op.getSem(),
-        op.getScope());
+    auto maskedValue = arith::SelectOp::create(rewriter, loc, mask, src, *fill);
+    auto newAtomicOp = mlir::triton::AtomicRMWOp::create(
+        rewriter, loc, src.getType(), rmwOp, ptr, maskedValue, mlir::Value(),
+        op.getSem(), op.getScope());
     rewriter.replaceOp(op, newAtomicOp);
     return success();
   }

@@ -78,21 +78,22 @@ module {
     tt.return
   }
 }
-// CHECK-LABEL:   func.func @kernel(
-// CHECK-SAME:                      %[[VAL_0:.*]]: memref<*xbf16>, %[[VAL_1:.*]]: i32, %[[VAL_2:.*]]: i32, %[[VAL_3:.*]]: i32) {
-// CHECK-DAG:           %[[VAL_4:.*]] = arith.constant 1 : index
-// CHECK-DAG:           %[[VAL_5:.*]] = arith.constant 1024 : index
-// CHECK-DAG:           %[[VAL_6:.*]] = arith.constant 0 : index
-// CHECK-DAG:           %[[VAL_7:.*]] = arith.constant 12 : index
-// CHECK-DAG:           %[[VAL_8:.*]] = arith.constant 3 : index
-// CHECK:           %[[VAL_9:.*]] = scf.for %[[VAL_10:.*]] = %[[VAL_6]] to %[[VAL_7]] step %[[VAL_8]] iter_args(%[[VAL_11:.*]] = %[[VAL_5]]) -> (index) {
-// CHECK:             %[[VAL_12:.*]] = arith.addi %[[VAL_11]], %[[VAL_8]] : index
-// CHECK:             %[[VAL_13:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_12]]], sizes: [256], strides: {{\[}}%[[VAL_4]]] : memref<*xbf16> to memref<256xbf16, strided<[?], offset: ?>>
-// CHECK:             %[[VAL_14:.*]] = memref.alloc() : memref<256xbf16>
-// CHECK:             memref.copy %[[VAL_13]], %[[VAL_14]] : memref<256xbf16, strided<[?], offset: ?>> to memref<256xbf16>
-// CHECK:             %[[VAL_15:.*]] = bufferization.to_tensor %[[VAL_14]] restrict writable : memref<256xbf16>
-// CHECK:             bufferization.materialize_in_destination %[[VAL_15]] in writable %[[VAL_13]]
-// CHECK:             scf.yield %[[VAL_12]] : index
-// CHECK:           }
-// CHECK:           return
-// CHECK:         }
+// CHECK: module {
+// CHECK:   func.func @kernel(%arg0: memref<*xbf16>, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32) {
+// CHECK:     %c1024 = arith.constant 1024 : index
+// CHECK:     %c0 = arith.constant 0 : index
+// CHECK:     %c12 = arith.constant 12 : index
+// CHECK:     %c3 = arith.constant 3 : index
+// CHECK:     %0 = scf.for %arg7 = %c0 to %c12 step %c3 iter_args(%arg8 = %c1024) -> (index) {
+// CHECK:       %1 = arith.addi %arg8, %c3 : index
+// CHECK:       %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<*xbf16> to memref<256xbf16, strided<[1], offset: ?>>
+// CHECK:       %cast = memref.cast %reinterpret_cast : memref<256xbf16, strided<[1], offset: ?>> to memref<256xbf16, strided<[?], offset: ?>>
+// CHECK:       %alloc = memref.alloc() : memref<256xbf16>
+// CHECK:       memref.copy %reinterpret_cast, %alloc : memref<256xbf16, strided<[1], offset: ?>> to memref<256xbf16>
+// CHECK:       %2 = bufferization.to_tensor %alloc restrict writable : memref<256xbf16> to tensor<256xbf16>
+// CHECK:       bufferization.materialize_in_destination %2 in writable %cast : (tensor<256xbf16>, memref<256xbf16, strided<[?], offset: ?>>) -> ()
+// CHECK:       scf.yield %1 : index
+// CHECK:     }
+// CHECK:     return
+// CHECK:   }
+// CHECK: }

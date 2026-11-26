@@ -30,10 +30,10 @@ module {
 // CHECK-DAG:       [[VAR_2_:%.+]] = arith.index_cast [[PARAM_2_]] : i32 to index
 // CHECK:           [[VAR_3_:%.+]] = arith.minsi [[VAR_2_]], [[CST_128_]] : index
 // CHECK:           [[VAR_4_:%.+]] = arith.maxsi [[VAR_3_]], [[CST_0_1_]] : index
-// CHECK-DAG:       [[VAR_5_:%.+]] = "tts.load"([[VAR_0_]], [[VAR_4_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 1, 1>, static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<128x!tt.ptr<bf16>>, index, bf16) -> tensor<128xbf16>
+// CHECK-DAG:       [[VAR_5_:%.+]] = "tts.load"([[VAR_0_]], [[VAR_4_]], [[CST_0_]]) <{operandSegmentSizes = array<i32: 1, 1, 0, 1>, static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<128x!tt.ptr<bf16>>, index, bf16) -> tensor<128xbf16>
 // CHECK-DAG:       [[VAR_6_:%.+]] = arith.index_cast [[PARAM_2_]] : i32 to index
 // CHECK:           [[VAR_7_:%.+]] = arith.minsi [[VAR_6_]], [[CST_128_]] : index
 // CHECK:           [[VAR_8_:%.+]] = arith.maxsi [[VAR_7_]], [[CST_0_1_]] : index
-// CHECK:           "tts.store"([[VAR_1_]], [[VAR_5_]], [[VAR_8_]]) <{static_mask_dims = array<i64: -9223372036854775808>}> : (tensor<128x!tt.ptr<bf16>>, tensor<128xbf16>, index) -> ()
+// CHECK:           "tts.store"([[VAR_1_]], [[VAR_5_]], [[VAR_8_]]) <{{.*}}static_mask_dims = array<i64: -9223372036854775808>{{.*}} : (tensor<128x!tt.ptr<bf16>>, tensor<128xbf16>, index) -> ()
 // CHECK:           tt.return
 // CHECK:         }

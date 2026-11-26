@@ -32,6 +32,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Config/llvm-config.h"
 
 #include <algorithm>
 #include <cassert>
@@ -41,7 +42,7 @@
 
 using namespace mlir;
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DECL
 #include "triton-shared/Conversion/TritonArithToLinalg/Passes.h.inc"
 
 static const std::string WRAP_SIDE_BY_SIDE = "wrap_side_by_side";
@@ -55,8 +56,28 @@ static memref::SubViewOp getSubview(int rank, ArrayRef<OpFoldResult> dims,
   auto dstType =
       memref::SubViewOp::inferResultType(sourceType, offsets, dims, strides);
 
-  return b.create<memref::SubViewOp>(loc, cast<MemRefType>(dstType), source,
+  return memref::SubViewOp::create(b, loc, cast<MemRefType>(dstType), source,
                                      offsets, dims, strides);
+}
+
+static memref::SubViewOp getSubview(int rank, ArrayRef<OpFoldResult> offsets,
+                                    ArrayRef<OpFoldResult> dims, Value source,
+                                    Location loc, OpBuilder &b) {
+  auto sourceType = cast<MemRefType>(source.getType());
+  SmallVector<OpFoldResult> strides(rank, b.getIndexAttr(1));
+  auto dstType =
+      memref::SubViewOp::inferResultType(sourceType, offsets, dims, strides);
+
+  return memref::SubViewOp::create(b, loc, cast<MemRefType>(dstType), source,
+                                     offsets, dims, strides);
+}
+
+// Mask offsets may be absent (prefix interval): pad to rank with 0 so the
+// subview/extract_slice offsets always match the tensor rank.
+static SmallVector<OpFoldResult>
+padMaskOffsets(int rank, SmallVector<OpFoldResult> offsets, OpBuilder &b) {
+  offsets.resize(rank, b.getIndexAttr(0));
+  return offsets;
 }
 
 namespace {
@@ -190,34 +211,34 @@ private:
             // wrapping around.
             ShapedType::kDynamic});
 
-    Value rowSize = rewriter.create<arith::ConstantOp>(
+    Value rowSize = arith::ConstantOp::create(rewriter,
         loc, rewriter.getIndexAttr(op.getSizes()[0]));
-    Value colSize = rewriter.create<arith::ConstantOp>(
+    Value colSize = arith::ConstantOp::create(rewriter,
         loc, rewriter.getIndexAttr(op.getSizes()[1]));
 
     Value modN = ofrToIndexValue(op.getMixedShape()[1], loc, rewriter);
 
-    Value x = rewriter.create<arith::RemSIOp>(loc, targetOffset, modN);
-    Value y = rewriter.create<arith::SubIOp>(loc, targetOffset, x);
+    Value x = arith::RemSIOp::create(rewriter, loc, targetOffset, modN);
+    Value y = arith::SubIOp::create(rewriter, loc, targetOffset, x);
 
     SmallVector<Value> strideVals =
         ofrsToIndexValues(op.getMixedStrides(), loc, rewriter);
 
     // First chunk
-    Value nextOffset = rewriter.create<arith::AddIOp>(loc, x, colSize);
+    Value nextOffset = arith::AddIOp::create(rewriter, loc, x, colSize);
     Value clampedOffset =
-        rewriter.create<arith::MinSIOp>(loc, nextOffset, modN);
-    Value d1 = rewriter.create<arith::SubIOp>(loc, clampedOffset, x);
+        arith::MinSIOp::create(rewriter, loc, nextOffset, modN);
+    Value d1 = arith::SubIOp::create(rewriter, loc, clampedOffset, x);
     SmallVector<Value> sizes1{rowSize, d1};
 
-    auto cast1 = rewriter.create<memref::ReinterpretCastOp>(
+    auto cast1 = memref::ReinterpretCastOp::create(rewriter,
         loc, resultType, adaptor.getBase(), targetOffset, sizes1, strideVals);
 
     // Second chunk
-    Value d2 = rewriter.create<arith::SubIOp>(loc, colSize, d1);
+    Value d2 = arith::SubIOp::create(rewriter, loc, colSize, d1);
     SmallVector<Value> sizes2{rowSize, d2};
 
-    auto cast2 = rewriter.create<memref::ReinterpretCastOp>(
+    auto cast2 = memref::ReinterpretCastOp::create(rewriter,
         loc, resultType, adaptor.getBase(), y, sizes2, strideVals);
 
     return {cast1, cast2};
@@ -294,9 +315,9 @@ private:
             // allow this anymore. So we put dynamic instead.
             ShapedType::kDynamic});
 
-    Value rowSize = rewriter.create<arith::ConstantOp>(
+    Value rowSize = arith::ConstantOp::create(rewriter,
         loc, rewriter.getIndexAttr(op.getSizes()[0]));
-    Value colSize = rewriter.create<arith::ConstantOp>(
+    Value colSize = arith::ConstantOp::create(rewriter,
         loc, rewriter.getIndexAttr(op.getSizes()[1]));
 
     Value strideRow = ofrToIndexValue(op.getMixedStrides()[0], loc, rewriter);
@@ -306,23 +327,23 @@ private:
 
     // First chunk
     Value wrappedAroundOff =
-        rewriter.create<arith::RemSIOp>(loc, targetOffset, strideRow);
+        arith::RemSIOp::create(rewriter, loc, targetOffset, strideRow);
     Value clampedOff =
-        rewriter.create<arith::AddIOp>(loc, modRow, wrappedAroundOff);
-    Value d1 = rewriter.create<arith::SubIOp>(loc, clampedOff, targetOffset);
-    d1 = rewriter.create<arith::DivSIOp>(loc, d1, strideRow);
+        arith::AddIOp::create(rewriter, loc, modRow, wrappedAroundOff);
+    Value d1 = arith::SubIOp::create(rewriter, loc, clampedOff, targetOffset);
+    d1 = arith::DivSIOp::create(rewriter, loc, d1, strideRow);
 
     SmallVector<Value> sizes1{d1, colSize};
     memref::ReinterpretCastOp cast1 =
-        rewriter.create<memref::ReinterpretCastOp>(
+        memref::ReinterpretCastOp::create(rewriter,
             loc, resultType, adaptor.getBase(), targetOffset, sizes1,
             ValueRange{strideRow, strideCol});
 
     // Second chunk
-    Value d2 = rewriter.create<arith::SubIOp>(loc, rowSize, d1);
+    Value d2 = arith::SubIOp::create(rewriter, loc, rowSize, d1);
     SmallVector<Value> sizes2{d2, colSize};
     memref::ReinterpretCastOp cast2 =
-        rewriter.create<memref::ReinterpretCastOp>(
+        memref::ReinterpretCastOp::create(rewriter,
             loc, resultType, adaptor.getBase(), wrappedAroundOff, sizes2,
             ValueRange{strideRow, strideCol});
 
@@ -350,7 +371,7 @@ private:
       wrapType = WRAP_SIDE_BY_SIDE;
     }
 
-    auto combinedCast = rewriter.create<UnrealizedConversionCastOp>(
+    auto combinedCast = UnrealizedConversionCastOp::create(rewriter,
         op.getLoc(), op.getType(), casts);
 
     combinedCast->setAttr(wrapType, rewriter.getUnitAttr());
@@ -375,7 +396,7 @@ private:
         op, staticTargetOffset.value_or(ShapedType::kDynamic), staticStrides,
         resultShape);
 
-    auto castOp = rewriter.create<memref::ReinterpretCastOp>(
+    auto castOp = memref::ReinterpretCastOp::create(rewriter,
         op.getLoc(), resultType, adaptor.getBase(), targetOffset,
         op.getMixedSizes(), mixedStrides);
 
@@ -442,19 +463,19 @@ private:
                               ConversionPatternRewriter &rewriter) const {
 
     auto zero =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+        arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(0));
 
     auto one =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(1));
+        arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(1));
 
-    Value block1Row = rewriter.create<memref::DimOp>(loc, block1, 0);
-    Value block1Col = rewriter.create<memref::DimOp>(loc, block1, 1);
+    Value block1Row = memref::DimOp::create(rewriter, loc, block1, 0);
+    Value block1Col = memref::DimOp::create(rewriter, loc, block1, 1);
 
-    Value block2Row = rewriter.create<memref::DimOp>(loc, block2, 0);
-    Value block2Col = rewriter.create<memref::DimOp>(loc, block2, 1);
+    Value block2Row = memref::DimOp::create(rewriter, loc, block2, 0);
+    Value block2Col = memref::DimOp::create(rewriter, loc, block2, 1);
 
     auto block1Dst =
-        rewriter.create<memref::SubViewOp>(loc, dst, /* offsets */
+        memref::SubViewOp::create(rewriter, loc, dst, /* offsets */
                                            ValueRange{zero, zero},
                                            /* sizes */
                                            ValueRange{block1Row, block1Col},
@@ -462,7 +483,7 @@ private:
                                            ValueRange{one, one});
 
     auto block2Dst =
-        rewriter.create<memref::SubViewOp>(loc, dst,
+        memref::SubViewOp::create(rewriter, loc, dst,
                                            /* offsets */
                                            ValueRange{zero, block1Col},
                                            /* sizes */
@@ -470,26 +491,26 @@ private:
                                            /* strides */
                                            ValueRange{one, one});
 
-    rewriter.create<memref::CopyOp>(loc, block1, block1Dst);
-    rewriter.create<memref::CopyOp>(loc, block2, block2Dst);
+    memref::CopyOp::create(rewriter, loc, block1, block1Dst);
+    memref::CopyOp::create(rewriter, loc, block2, block2Dst);
   }
 
   void createStackedCopies(Value block1, Value block2, Value dst, Location loc,
                            ConversionPatternRewriter &rewriter) const {
 
     auto zero =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+        arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(0));
     auto one =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(1));
+        arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(1));
 
-    Value block1Row = rewriter.create<memref::DimOp>(loc, block1, 0);
-    Value block1Col = rewriter.create<memref::DimOp>(loc, block1, 1);
+    Value block1Row = memref::DimOp::create(rewriter, loc, block1, 0);
+    Value block1Col = memref::DimOp::create(rewriter, loc, block1, 1);
 
-    Value block2Row = rewriter.create<memref::DimOp>(loc, block2, 0);
-    Value block2Col = rewriter.create<memref::DimOp>(loc, block2, 1);
+    Value block2Row = memref::DimOp::create(rewriter, loc, block2, 0);
+    Value block2Col = memref::DimOp::create(rewriter, loc, block2, 1);
 
     auto block1Dst =
-        rewriter.create<memref::SubViewOp>(loc, dst, /* offsets */
+        memref::SubViewOp::create(rewriter, loc, dst, /* offsets */
                                            ValueRange{zero, zero},
                                            /* sizes */
                                            ValueRange{block1Row, block1Col},
@@ -497,7 +518,7 @@ private:
                                            ValueRange{one, one});
 
     auto block2Dst =
-        rewriter.create<memref::SubViewOp>(loc, dst,
+        memref::SubViewOp::create(rewriter, loc, dst,
                                            /* offsets */
                                            ValueRange{block1Row, zero},
                                            /* sizes */
@@ -505,8 +526,8 @@ private:
                                            /* strides */
                                            ValueRange{one, one});
 
-    rewriter.create<memref::CopyOp>(loc, block1, block1Dst);
-    rewriter.create<memref::CopyOp>(loc, block2, block2Dst);
+    memref::CopyOp::create(rewriter, loc, block1, block1Dst);
+    memref::CopyOp::create(rewriter, loc, block2, block2Dst);
   }
 
   memref::SubViewOp createSubview(Value src, ArrayRef<OpFoldResult> offsets,
@@ -516,7 +537,7 @@ private:
     auto srcType = cast<MemRefType>(src.getType());
     auto dstType =
         memref::SubViewOp::inferResultType(srcType, offsets, sizes, strides);
-    return rewriter.create<memref::SubViewOp>(loc, cast<MemRefType>(dstType),
+    return memref::SubViewOp::create(rewriter, loc, cast<MemRefType>(dstType),
                                               src, offsets, sizes, strides);
   }
 
@@ -527,7 +548,7 @@ private:
     OpFoldResult subviewRowFull = dims[0];
     OpFoldResult subviewColFull = dims[1];
     OpFoldResult col1 =
-        rewriter.create<memref::DimOp>(loc, block1, 1).getResult();
+        memref::DimOp::create(rewriter, loc, block1, 1).getResult();
     OpFoldResult subviewCol1 = minOFRs(col1, subviewColFull, loc, rewriter);
     OpFoldResult subviewCol2 =
         subOFRs(subviewColFull, subviewCol1, loc, rewriter);
@@ -549,7 +570,7 @@ private:
     OpFoldResult subviewRowFull = dims[0];
     OpFoldResult subviewColFull = dims[1];
     OpFoldResult row1 =
-        rewriter.create<memref::DimOp>(loc, block1, 0).getResult();
+        memref::DimOp::create(rewriter, loc, block1, 0).getResult();
     OpFoldResult subviewRow1 = minOFRs(row1, subviewRowFull, loc, rewriter);
     OpFoldResult subviewRow2 =
         subOFRs(subviewRowFull, subviewRow1, loc, rewriter);
@@ -583,18 +604,18 @@ private:
     // offstes represents the corresponding initial offset value
     // of each TEC in the shared memory
     SmallVector<OpFoldResult> modOffsets(rank, rewriter.getIndexAttr(0));
-    Value c4 = rewriter.create<arith::ConstantIndexOp>(loc, 4);
+    Value c4 = arith::ConstantIndexOp::create(rewriter, loc, 4);
     for (unsigned dim = 0; dim < rank; dim++) {
       Value pid = func.getArgument(totalArgs - 3 + dim);
-      Value pidIndex = rewriter.create<arith::IndexCastOp>(
+      Value pidIndex = arith::IndexCastOp::create(rewriter,
           loc, rewriter.getIndexType(), pid);
-      Value mod = rewriter.create<arith::RemUIOp>(loc, pidIndex, c4);
-      Value cShape = rewriter.create<arith::ConstantIndexOp>(loc, shape[dim]);
+      Value mod = arith::RemUIOp::create(rewriter, loc, pidIndex, c4);
+      Value cShape = arith::ConstantIndexOp::create(rewriter, loc, shape[dim]);
       modOffsets[dim] =
-          rewriter.create<arith::MulIOp>(loc, mod, cShape).getResult();
+          arith::MulIOp::create(rewriter, loc, mod, cShape).getResult();
     }
 
-    return rewriter.create<memref::SubViewOp>(loc, alloc, modOffsets,
+    return memref::SubViewOp::create(rewriter, loc, alloc, modOffsets,
                                               tensorShape, strides);
   }
 
@@ -610,7 +631,7 @@ private:
     auto tensorType = cast<RankedTensorType>(op.getType());
     auto elemType = tensorType.getElementType();
 
-    auto alloc = rewriter.create<memref::AllocOp>(
+    auto alloc = memref::AllocOp::create(rewriter,
         loc, MemRefType::get(tensorType.getShape(), elemType));
     if (op->hasAttr("flagtree_hints")) {
       auto hintAttr = dyn_cast<StringAttr>(op->getAttr("flagtree_hints"));
@@ -625,7 +646,7 @@ private:
         // TODO: tagMemSpace value 8 is only for aipu backend
         auto tagMemSpace =
             IntegerAttr::get(IntegerType::get(op.getContext(), 64), 8);
-        alloc = rewriter.create<memref::AllocOp>(
+        alloc = memref::AllocOp::create(rewriter,
             loc, MemRefType::get(sharedShape, elemType, nullptr, tagMemSpace));
         alloc->setAttr("flagtree_hints", hintAttr);
       }
@@ -660,13 +681,13 @@ private:
         auto tensorSubview = createTensorSubview(op, alloc, rewriter);
         tensorSubview->setAttr("flagtree_hints",
                                rewriter.getStringAttr("shared_memory"));
-        rewriter.create<memref::CopyOp>(loc, ptr, tensorSubview);
-        Value tensor = rewriter.create<bufferization::ToTensorOp>(
+        memref::CopyOp::create(rewriter, loc, ptr, tensorSubview);
+        Value tensor = bufferization::ToTensorOp::create(rewriter,
             loc, tensorType, tensorSubview, true /* restrict */,
             true /* writable */);
         rewriter.replaceOp(op, tensor);
       } else {
-        auto copyOp = rewriter.create<memref::CopyOp>(loc, ptr, alloc);
+        auto copyOp = memref::CopyOp::create(rewriter, loc, ptr, alloc);
         auto strAttr = op->getAttrOfType<mlir::StringAttr>("flagtree_hints");
         if (strAttr && !strAttr.getValue().empty()) {
           copyOp->setAttr("flagtree_hints", strAttr);
@@ -675,7 +696,7 @@ private:
     }
 
     if (cast<MemRefType>(alloc.getType()).getMemorySpaceAsInt() != 8) {
-      Value tensor = rewriter.create<bufferization::ToTensorOp>(
+      Value tensor = bufferization::ToTensorOp::create(rewriter,
           loc, tensorType, alloc, true /* restrict */, true /* writable */);
       rewriter.replaceOp(op, tensor);
     }
@@ -693,7 +714,7 @@ private:
     auto tensorType = cast<RankedTensorType>(op.getType());
     auto elemType = tensorType.getElementType();
 
-    auto alloc = rewriter.create<memref::AllocOp>(
+    auto alloc = memref::AllocOp::create(rewriter,
         loc, MemRefType::get(tensorType.getShape(), elemType));
     if (op->hasAttr("flagtree_hints")) {
       auto hintAttr = dyn_cast<StringAttr>(op->getAttr("flagtree_hints"));
@@ -708,35 +729,53 @@ private:
         // TODO: tagMemSpace value 8 is only for aipu backend
         auto tagMemSpace =
             IntegerAttr::get(IntegerType::get(op.getContext(), 64), 8);
-        alloc = rewriter.create<memref::AllocOp>(
+        alloc = memref::AllocOp::create(rewriter,
             loc, MemRefType::get(sharedShape, elemType, nullptr, tagMemSpace));
         alloc->setAttr("flagtree_hints", hintAttr);
       }
     }
 
     SmallVector<OpFoldResult> mixedDims = op.getMixedMaskDims();
+    SmallVector<OpFoldResult> mixedOffsets =
+        padMaskOffsets(tensorType.getRank(), op.getMixedMaskOffsets(), rewriter);
 
     // Fill load destination with other value
     if (op.getOther()) {
-      // For each dimension check if dims[i] < shape[i], or-accumulate
-      // the result
+      // For each dimension check if the valid interval covers the whole dim
+      // (offsets[i] > 0 or dims[i] < shape[i]), or-accumulate the result
       auto shape = tensorType.getShape();
       auto accBase =
-          rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false))
+          arith::ConstantOp::create(rewriter, loc, rewriter.getBoolAttr(false))
               .getResult();
       for (size_t i = 0; i < shape.size(); i++) {
-        auto shapei = rewriter.create<arith::ConstantOp>(
+        auto shapei = arith::ConstantOp::create(rewriter,
             loc, rewriter.getIndexAttr(shape[i]));
 
         Value dimi = dyn_cast<Value>(mixedDims[i]);
         if (!dimi) {
-          dimi = rewriter.create<arith::ConstantOp>(
+          dimi = arith::ConstantOp::create(rewriter,
               loc, rewriter.getIndexAttr(op.getStaticMaskDims()[i]));
         }
 
-        Value cmp = rewriter.create<arith::CmpIOp>(
+        Value cmp = arith::CmpIOp::create(rewriter,
             loc, arith::CmpIPredicate::slt, dimi, shapei);
-        accBase = rewriter.create<arith::OrIOp>(loc, accBase, cmp);
+        accBase = arith::OrIOp::create(rewriter, loc, accBase, cmp);
+
+        Value offi = i < mixedOffsets.size() ? dyn_cast<Value>(mixedOffsets[i])
+                                             : nullptr;
+        if (!offi) {
+          int64_t staticOff =
+              i < op.getStaticMaskOffsets().size() ? op.getStaticMaskOffsets()[i] : 0;
+          if (staticOff == 0)
+            continue;
+          offi = arith::ConstantOp::create(rewriter,
+              loc, rewriter.getIndexAttr(staticOff));
+        }
+        auto zero =
+            arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(0));
+        Value offCmp = arith::CmpIOp::create(rewriter,
+            loc, arith::CmpIPredicate::sgt, offi, zero);
+        accBase = arith::OrIOp::create(rewriter, loc, accBase, offCmp);
       }
 
       // condition the memset on the or-accumulation
@@ -752,10 +791,10 @@ private:
       } else {
         fillMem = alloc;
       }
-      rewriter.create<scf::IfOp>(loc, accBase, [&](OpBuilder &b, Location loc) {
-        b.create<linalg::FillOp>(loc, ValueRange{op.getOther()},
+      scf::IfOp::create(rewriter, loc, accBase, [&](OpBuilder &b, Location loc) {
+        linalg::FillOp::create(b, loc, ValueRange{op.getOther()},
                                  ValueRange{fillMem});
-        b.create<scf::YieldOp>(loc);
+        scf::YieldOp::create(b, loc);
       });
     }
 
@@ -785,8 +824,9 @@ private:
       rewriter.eraseOp(unrealizedCast);
 
     } else {
-      memref::SubViewOp srcSubview =
-          getSubview(tensorType.getRank(), mixedDims, ptr, loc, rewriter);
+      memref::SubViewOp srcSubview = getSubview(tensorType.getRank(),
+                                                mixedOffsets, mixedDims, ptr,
+                                                loc, rewriter);
       if (cast<MemRefType>(alloc.getType()).getMemorySpaceAsInt() == 8) {
         // The tensorSubview passes bufferization.to_tensor to
         // convert memref into tensor form for subsequent computations
@@ -798,22 +838,30 @@ private:
         // dstSubview represents moving to the
         // specified TEC space of shared memory
         auto modOffsets = tensorSubview.getMixedOffsets();
+        // The source subview may start at a non-zero mask offset; the matching
+        // destination region must be shifted by the same amount so the copied
+        // elements land in the same relative position of the shared-memory tile.
+        SmallVector<OpFoldResult> dstOffsets;
+        for (auto [modOffset, srcOffset] :
+             llvm::zip(modOffsets, mixedOffsets))
+          dstOffsets.push_back(addOFRs(modOffset, srcOffset, loc, rewriter));
         auto allocType = cast<MemRefType>(alloc.getType());
-        auto dstType = memref::SubViewOp::inferResultType(allocType, modOffsets,
+        auto dstType = memref::SubViewOp::inferResultType(allocType, dstOffsets,
                                                           mixedDims, strides);
-        auto dstSubview = rewriter.create<memref::SubViewOp>(
-            loc, cast<MemRefType>(dstType), alloc, modOffsets, mixedDims,
+        auto dstSubview = memref::SubViewOp::create(rewriter,
+            loc, cast<MemRefType>(dstType), alloc, dstOffsets, mixedDims,
             strides);
-        rewriter.create<memref::CopyOp>(loc, srcSubview, dstSubview);
-        Value tensor = rewriter.create<bufferization::ToTensorOp>(
+        memref::CopyOp::create(rewriter, loc, srcSubview, dstSubview);
+        Value tensor = bufferization::ToTensorOp::create(rewriter,
             loc, tensorType, tensorSubview, true /* restrict */,
             true /* writable */);
         rewriter.replaceOp(op, tensor);
       } else {
-        memref::SubViewOp dstSubview =
-            getSubview(tensorType.getRank(), mixedDims, alloc, loc, rewriter);
+        memref::SubViewOp dstSubview = getSubview(tensorType.getRank(),
+                                                  mixedOffsets, mixedDims,
+                                                  alloc, loc, rewriter);
         auto copyOp =
-            rewriter.create<memref::CopyOp>(loc, srcSubview, dstSubview);
+            memref::CopyOp::create(rewriter, loc, srcSubview, dstSubview);
         auto strAttr = op->getAttrOfType<mlir::StringAttr>("flagtree_hints");
         if (strAttr && !strAttr.getValue().empty()) {
           copyOp->setAttr("flagtree_hints", strAttr);
@@ -821,7 +869,7 @@ private:
       }
     }
     if (cast<MemRefType>(alloc.getType()).getMemorySpaceAsInt() != 8) {
-      Value tensor = rewriter.create<bufferization::ToTensorOp>(
+      Value tensor = bufferization::ToTensorOp::create(rewriter,
           loc, tensorType, alloc, true /* restrict */, true /* writable */);
       rewriter.replaceOp(op, tensor);
     }
@@ -854,10 +902,32 @@ private:
     SmallVector<OpFoldResult> offsets(rank, b.getIndexAttr(0));
     SmallVector<OpFoldResult> strides(rank, b.getIndexAttr(1));
 
-    auto dstType = tensor::ExtractSliceOp::inferResultType(sourceType, offsets,
-                                                           dims, strides);
+#if LLVM_VERSION_MAJOR >= 23
+    auto dstType = tensor::ExtractSliceOp::inferResultType(sourceType, dims);
+#else
+    auto dstType = tensor::ExtractSliceOp::inferResultType(
+        sourceType, offsets, dims, strides);
+#endif
 
-    return b.create<tensor::ExtractSliceOp>(loc, dstType, source, offsets, dims,
+    return tensor::ExtractSliceOp::create(b, loc, dstType, source, offsets, dims,
+                                            strides);
+  }
+
+  static tensor::ExtractSliceOp
+  getExtractSlice(int rank, ArrayRef<OpFoldResult> offsets,
+                  ArrayRef<OpFoldResult> dims, Value source, const Location loc,
+                  OpBuilder &b) {
+    auto sourceType = cast<RankedTensorType>(source.getType());
+    SmallVector<OpFoldResult> strides(rank, b.getIndexAttr(1));
+
+#if LLVM_VERSION_MAJOR >= 23
+    auto dstType = tensor::ExtractSliceOp::inferResultType(sourceType, dims);
+#else
+    auto dstType = tensor::ExtractSliceOp::inferResultType(
+        sourceType, offsets, dims, strides);
+#endif
+
+    return tensor::ExtractSliceOp::create(b, loc, dstType, source, offsets, dims,
                                             strides);
   }
 
@@ -875,16 +945,19 @@ public:
 
     if (op.hasMask()) {
       auto mixedDims = op.getMixedMaskDims();
+      auto mixedOffsets =
+          padMaskOffsets(rank, op.getMixedMaskOffsets(), rewriter);
 
-      auto srcSlice =
-          getExtractSlice(rank, mixedDims, storeValue, loc, rewriter);
-      auto dstSubview = getSubview(rank, mixedDims, ptr, loc, rewriter);
+      auto srcSlice = getExtractSlice(rank, mixedOffsets, mixedDims, storeValue,
+                                      loc, rewriter);
+      auto dstSubview =
+          getSubview(rank, mixedOffsets, mixedDims, ptr, loc, rewriter);
 
-      auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
+      auto storeOp = bufferization::MaterializeInDestinationOp::create(rewriter,
           loc, srcSlice, dstSubview);
       storeOp.setWritable(true);
     } else {
-      auto storeOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
+      auto storeOp = bufferization::MaterializeInDestinationOp::create(rewriter,
           loc, storeValue, ptr);
       storeOp.setWritable(true);
     }

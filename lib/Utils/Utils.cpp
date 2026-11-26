@@ -27,14 +27,14 @@ Value getScalarValue(Value operand, Location loc, OpBuilder &builder) {
                   if (auto shapedType = dyn_cast<ShapedType>(resType)) {
                     resType = shapedType.getElementType();
                   }
-                  return builder.create<arith::SIToFPOp>(loc, resType, src);
+                  return arith::SIToFPOp::create(builder, loc, resType, src);
                 })
                 .Case<arith::TruncFOp>([&](Operation *op) {
                   auto resType = op->getResults()[0].getType();
                   if (auto shapedType = dyn_cast<ShapedType>(resType)) {
                     resType = shapedType.getElementType();
                   }
-                  return builder.create<arith::TruncFOp>(loc, resType, src);
+                  return arith::TruncFOp::create(builder, loc, resType, src);
                 })
                 .Default([](Operation *op) {
                   llvm_unreachable("unsupported op in generating ");
@@ -158,7 +158,7 @@ Value declareTx81Function(ModuleOp module, OpBuilder &builder, Location loc,
   // Check if the function already exists
   Operation *funcOp = module.lookupSymbol(name);
   if (funcOp)
-    return builder.create<LLVM::AddressOfOp>(
+    return LLVM::AddressOfOp::create(builder,
         loc, LLVM::LLVMPointerType::get(builder.getContext()), name);
 
   // Create function type
@@ -169,13 +169,13 @@ Value declareTx81Function(ModuleOp module, OpBuilder &builder, Location loc,
   auto ip = builder.saveInsertionPoint();
   builder.setInsertionPointToStart(module.getBody());
 
-  builder.create<LLVM::LLVMFuncOp>(loc, name, funcType,
+  LLVM::LLVMFuncOp::create(builder, loc, name, funcType,
                                    LLVM::Linkage::External);
 
   builder.restoreInsertionPoint(ip);
 
   // Return function pointer
-  return builder.create<LLVM::AddressOfOp>(
+  return LLVM::AddressOfOp::create(builder,
       loc, LLVM::LLVMPointerType::get(builder.getContext()), name);
 }
 
@@ -240,7 +240,7 @@ TypedAttr getRedBaseAttr(OpBuilder &builder, Operation *redOp,
 arith::ConstantOp getRedBaseConstOp(ConversionPatternRewriter &rewriter,
                                     Operation *redOp, Type constantType) {
   auto attr = getRedBaseAttr(rewriter, redOp, constantType);
-  return rewriter.create<arith::ConstantOp>(redOp->getLoc(), constantType,
+  return arith::ConstantOp::create(rewriter, redOp->getLoc(), constantType,
                                             attr);
 }
 

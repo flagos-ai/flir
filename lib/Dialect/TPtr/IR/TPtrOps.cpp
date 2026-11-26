@@ -37,7 +37,8 @@ OpFoldResult TypeOffsetOp::fold(FoldAdaptor adaptor) {
   return adaptor.getBaseTypeAttr();
 }
 
-#if (__TRITON_VERSION_MAJOR__ * 100 + __TRITON_VERSION_MINOR__) >= 306
+#if !defined(__TRITON_VERSION_MAJOR__) ||                                      \
+    (__TRITON_VERSION_MAJOR__ * 100 + __TRITON_VERSION_MINOR__) >= 306
 // The LLVM22 dialect td drops the OpBuilder that tablegen used to generate;
 // provide it here. Below LLVM22 the generated builder still exists, so a
 // hand-written definition would clash (redefinition).

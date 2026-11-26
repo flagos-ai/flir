@@ -40,8 +40,8 @@ Value sliceFirst(ConversionPatternRewriter &rewriter, Location loc, Value input,
   // Retrieve slice strides of input.
   SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
   // Create the slice of input.
-  return rewriter.create<tensor::ExtractSliceOp>(loc, input, offsets, sizes,
-                                                 strides);
+  return tensor::ExtractSliceOp::create(rewriter, loc, input, offsets, sizes,
+                                        strides);
 }
 
 // Copyright (C) [2022-2025] by Cambricon.
@@ -65,8 +65,8 @@ Value sliceRemaining(ConversionPatternRewriter &rewriter, Location loc,
   // Retrieve slice strides of input.
   SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
   // Create the slice of input.
-  return rewriter.create<tensor::ExtractSliceOp>(loc, input, offsets, sizes,
-                                                 strides);
+  return tensor::ExtractSliceOp::create(rewriter, loc, input, offsets, sizes,
+                                        strides);
 }
 
 // Copyright (C) [2022-2025] by Cambricon.
@@ -193,8 +193,8 @@ LogicalResult applyLinalgReduce(triton::ReduceOp op,
       [[maybe_unused]] bool res = createReassociationMaps(
           rewriter, inputShape, initTy.getShape(), reassociationMap);
       assert(res && "attempting to collapse into an incompatible shape");
-      auto collapse = rewriter.create<tensor::CollapseShapeOp>(
-          loc, inputVal, reassociationMap);
+      auto collapse = tensor::CollapseShapeOp::create(rewriter, loc, inputVal,
+                                                      reassociationMap);
       initVals.push_back(collapse);
       continue;
     }
@@ -210,8 +210,8 @@ LogicalResult applyLinalgReduce(triton::ReduceOp op,
       [[maybe_unused]] bool res = createReassociationMaps(
           rewriter, sliceShape, initTy.getShape(), reassociationMap);
       assert(res && "attempting to collapse into an incompatible shape");
-      auto collapse = rewriter.create<tensor::CollapseShapeOp>(
-          loc, slice, reassociationMap);
+      auto collapse = tensor::CollapseShapeOp::create(rewriter, loc, slice,
+                                                      reassociationMap);
       initVals.push_back(collapse);
     }
     // 2. Slice the remaining elements of input operands, reduce them and
@@ -229,8 +229,9 @@ LogicalResult applyLinalgReduce(triton::ReduceOp op,
       return results;
     SmallVector<Value> extractResults;
     for (auto [tensor, type] : llvm::zip(results, convertedResultTensorTypes)) {
-      Value scalar = rewriter.create<tensor::ExtractOp>(
-          loc, type.getElementType(), tensor, /*indices=*/ValueRange{});
+      Value scalar =
+          tensor::ExtractOp::create(rewriter, loc, type.getElementType(),
+                                    tensor, /*indices=*/ValueRange{});
       extractResults.push_back(scalar);
     }
     return extractResults;
@@ -245,8 +246,9 @@ LogicalResult applyLinalgReduce(triton::ReduceOp op,
 
   // Create a linalg.reduce on the same input and move the combine region
   // there. (ReduceReturnOpConversion will take care of the terminator.)
-  auto reduceOp = rewriter.create<linalg::ReduceOp>(
-      loc, /*resultTypes=*/SmallVector<Type>(convertedResultTensorTypes),
+  auto reduceOp = linalg::ReduceOp::create(
+      rewriter, loc,
+      /*resultTypes=*/SmallVector<Type>(convertedResultTensorTypes),
       /*inputs=*/inputVals, /*inits=*/initVals,
       /*dimensions=*/ArrayRef<int64_t>{op.getAxis()});
   rewriter.inlineRegionBefore(op.getCombineOp(), reduceOp.getCombiner(),

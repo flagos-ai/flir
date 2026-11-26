@@ -66,6 +66,6 @@ module {
 // CHECK:             [[VAR_11_2_:%.+]] = arith.sitofp [[IN_4_]] : i32 to f32
 // CHECK:             linalg.yield [[VAR_11_2_]] : f32
 // CHECK:           } -> tensor<4xf32>
-// CHECK:           "tts.store"([[VAR_8_]], [[VAR_10_]]) <{static_mask_dims = array<i64>}> : (tensor<4x!tt.ptr<f32>>, tensor<4xf32>) -> ()
+// CHECK:           "tts.store"([[VAR_8_]], [[VAR_10_]]) <{{.*}}static_mask_dims = array<i64>{{.*}} : (tensor<4x!tt.ptr<f32>>, tensor<4xf32>) -> ()
 // CHECK:           return
 // CHECK:         }
