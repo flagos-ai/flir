@@ -28,6 +28,7 @@
 #include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -190,12 +191,67 @@ BitcastConverter::matchAndRewrite(triton::BitcastOp op, OpAdaptor adaptor,
   return success();
 }
 
+static Value transposeInterleavedPair(triton::TransOp op, Value src,
+                                      ConversionPatternRewriter &rewriter) {
+  auto target =
+      op->getParentOfType<ModuleOp>()->getAttrOfType<hacc::TargetAttr>(
+          "hacc.target");
+  if (compileOn91095Flag || !target ||
+      !target.getTarget().getValue().starts_with("Ascend910B"))
+    return {};
+
+  auto type = cast<RankedTensorType>(src.getType());
+  if (type.getRank() != 3 || !type.hasStaticShape() || type.getEncoding() ||
+      !type.getElementType().isF32() || type.getDimSize(2) != 2 ||
+      op.getOrder() != ArrayRef<int>({1, 0, 2}))
+    return {};
+
+  const int64_t rows = type.getDimSize(0);
+  const int64_t cols = type.getDimSize(1);
+  // Keep each planar row aligned to 32 bytes and the interleaved tile within
+  // 16 KiB, so the additional planar buffers stay bounded on 910B.
+  if (rows < 8 || cols < 8 || rows % 8 != 0 || cols % 8 != 0 ||
+      type.getNumElements() > 4096)
+    return {};
+
+  const Location loc = op.getLoc();
+  const Type elementType = type.getElementType();
+  auto flatType = RankedTensorType::get({2 * rows * cols}, elementType);
+  auto planeType = RankedTensorType::get({rows * cols}, elementType);
+  auto matrixType = RankedTensorType::get({rows, cols}, elementType);
+  const SmallVector<ReassociationIndices> pairAxes{{0, 1, 2}};
+  const SmallVector<ReassociationIndices> matrixAxes{{0, 1}};
+
+  // The native rank-three transpose requests an aligned stride between pairs
+  // of FP32 values. Deinterleave first so that only the aligned matrices are
+  // transposed, then restore the original channel order.
+  Value flat =
+      rewriter.create<tensor::CollapseShapeOp>(loc, flatType, src, pairAxes);
+  SmallVector<Value, 2> planes;
+  for (int64_t channel = 0; channel < 2; ++channel) {
+    auto deinterleave = rewriter.create<hfusion::DeinterleaveOp>(
+        loc, TypeRange{planeType}, flat, rewriter.getI64IntegerAttr(channel));
+    Value matrix = rewriter.create<tensor::ExpandShapeOp>(
+        loc, matrixType, deinterleave->getResult(0), matrixAxes);
+    Value transposed =
+        ConverterUtils::getTransposedValue(matrix, loc, rewriter, {1, 0});
+    planes.push_back(rewriter.create<tensor::CollapseShapeOp>(
+        loc, planeType, transposed, matrixAxes));
+  }
+  Value interleaved =
+      rewriter.create<hfusion::InterleaveOp>(loc, flatType, ValueRange(planes));
+  return rewriter.create<tensor::ExpandShapeOp>(loc, op.getResult().getType(),
+                                                interleaved, pairAxes);
+}
+
 LogicalResult
 TransposeConverter::matchAndRewrite(triton::TransOp op, OpAdaptor adaptor,
                                     ConversionPatternRewriter &rewriter) const {
   auto src = adaptor.getSrc();
-  auto res = ConverterUtils::getTransposedValue(src, op.getLoc(), rewriter,
-                                                op.getOrder());
+  Value res = transposeInterleavedPair(op, src, rewriter);
+  if (!res)
+    res = ConverterUtils::getTransposedValue(src, op.getLoc(), rewriter,
+                                             op.getOrder());
   rewriter.replaceOp(op, res);
   return success();
 }
