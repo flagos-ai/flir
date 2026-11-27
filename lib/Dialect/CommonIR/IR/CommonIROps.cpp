@@ -53,6 +53,31 @@ LogicalResult GmOffsetOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult CopyOp::verify() {
+  if (getPredication().size() > 2)
+    return emitOpError("expected at most a mask and a fill value");
+  if (!getMask())
+    return success();
+  auto src = dyn_cast<BufType>(getSrc().getType());
+  auto dst = dyn_cast<BufType>(getDst().getType());
+  if (bool(src) == bool(dst))
+    return emitOpError("masked copy requires exactly one buffer");
+  auto buffer = src ? src : dst;
+  auto mask = cast<RankedTensorType>(getMask().getType());
+  if (!mask.getElementType().isInteger(1) || mask.getShape() != buffer.getShape())
+    return emitOpError("mask must be an i1 tensor with the buffer shape");
+  auto pointers = dyn_cast<RankedTensorType>((src ? getDst() : getSrc()).getType());
+  auto ptr = pointers ? dyn_cast<mlir::triton::PointerType>(pointers.getElementType())
+                      : mlir::triton::PointerType();
+  if (!ptr || pointers.getShape() != buffer.getShape() ||
+      ptr.getPointeeType() != buffer.getElementType())
+    return emitOpError("pointer tensor must match the buffer shape and element type");
+  if (auto other = getOther()) {
+    if (!dst)
+      return emitOpError("other requires a buffer destination");
+    auto fill = cast<RankedTensorType>(other.getType());
+    if (fill.getShape() != buffer.getShape() || fill.getElementType() != buffer.getElementType())
+      return emitOpError("other must match the buffer shape and element type");
+  }
   return success();
 }
 
@@ -237,6 +262,14 @@ LogicalResult CastOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ToTensorOp::verify() {
+  auto result = cast<ShapedType>(getResult().getType());
+  if (isa<RankedTensorType>(result))
+    return success();
+  auto source = cast<BufType>(getSrc().getType());
+  if (!result.hasRank() ||
+      result.getShape() != source.getShape() ||
+      result.getElementType() != source.getElementType())
+    return emitOpError("storage view must preserve source shape and element type");
   return success();
 }
 

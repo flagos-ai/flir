@@ -151,7 +151,9 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   let summary = "Copy data between memory regions with optional layout conversion";
   let description = [{
     Copies data from source to destination, optionally performing layout
-    conversion (e.g., ND→NZ for Cube operands) and transpose.
+    conversion (e.g., ND→NZ for Cube operands) and transpose. A pointer-tensor
+    copy can supply a per-element i1 mask. A masked read fills excluded
+    lanes with other (zero by default); a masked write leaves them untouched.
 
     Example:
     ```mlir
@@ -163,6 +165,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
+    Variadic<TT_Tensor>:$predication,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_NZLayoutAttr>:$dst_nz_layout,
@@ -170,8 +173,26 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
     OptionalAttr<StrAttr>:$comment
   );
 
+  // The trailing values are ordered as [mask, fill]; old generic IR with
+  // just src and dst needs no operand-segment attribute.
+  let extraClassDeclaration = [{
+    ::mlir::Value getMask() {
+      return getPredication().empty() ? ::mlir::Value() : getPredication().front();
+    }
+    ::mlir::Value getOther() {
+      return getPredication().size() < 2 ? ::mlir::Value() : getPredication()[1];
+    }
+  }];
+  // Keep builders for the original unpredicated operation source compatible.
+  let builders = [OpBuilder<(ins "Value":$src, "Value":$dst,
+      "EngineAttr":$engine, "LayoutAttr":$srcLayout, "NZLayoutAttr":$dstLayout,
+      "UnitAttr":$transpose, "StringAttr":$comment), [{
+    build($_builder, $_state, src, dst, ValueRange{}, engine, srcLayout,
+          dstLayout, transpose, comment);
+  }]>];
+
   let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
+    $src `->` $dst custom<CopyPredication>($predication, type($predication)) attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
@@ -448,7 +469,9 @@ def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [MemoryEffects<[MemRead]>]> {
   let description = [{
     Materializes a buffer as a standard ranked tensor so it can feed Triton
     compute ops (tt.dot, arith.*, math.*, reduce, ...). The result is a builtin
-    RankedTensorType (not a !tile.* type), which is what those ops require.
+    RankedTensorType for computation. With a storage descriptor result, the
+    operation exposes the same backing allocation for address-taking and
+    aliases. The latter form must not materialize the buffer contents.
 
     Example:
     ```mlir
@@ -460,7 +483,13 @@ def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [MemoryEffects<[MemRead]>]> {
     CommonIR_BufType:$src
   );
 
-  let results = (outs TT_Tensor:$result);
+  // A storage view is a ranked memory descriptor with the source shape and
+  // element type. A ranked tensor result still materializes the element values.
+  let results = (outs AnyTypeOf<[TT_Tensor, Type<CPred<
+    "::llvm::isa<::mlir::ShapedType>($_self) && "
+    "!::llvm::isa<::mlir::TensorType, ::mlir::VectorType>($_self)">,
+    "storage descriptor">], "ranked tensor or storage descriptor",
+    "::mlir::ShapedType">:$result);
 
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
 }

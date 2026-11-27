@@ -48,5 +48,29 @@ void CommonIRDialect::initialize() {
 #include "mlir-ext/Dialect/CommonIR/IR/CommonIROpsAttrDefs.cpp.inc"
 #define GET_TYPEDEF_CLASSES
 #include "mlir-ext/Dialect/CommonIR/IR/CommonIRTypes.cpp.inc"
+// The operands are a single ordered variadic group so that generic two-operand
+// copies defined before predication remain valid.
+static ParseResult parseCopyPredication(
+    OpAsmParser &parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &values,
+    SmallVectorImpl<Type> &types) {
+  if (failed(parser.parseOptionalKeyword("mask")))
+    return success();
+  if (parser.parseOperand(values.emplace_back()) ||
+      parser.parseColonType(types.emplace_back()))
+    return failure();
+  if (succeeded(parser.parseOptionalKeyword("other")))
+    return failure(parser.parseOperand(values.emplace_back()) ||
+                   parser.parseColonType(types.emplace_back()));
+  return success();
+}
+
+static void printCopyPredication(OpAsmPrinter &printer, Operation *,
+                                 OperandRange values, TypeRange types) {
+  if (!values.empty())
+    printer << "mask " << values[0] << " : " << types[0];
+  if (values.size() > 1)
+    printer << " other " << values[1] << " : " << types[1];
+}
+
 #define GET_OP_CLASSES
 #include "mlir-ext/Dialect/CommonIR/IR/CommonIROps.cpp.inc"
