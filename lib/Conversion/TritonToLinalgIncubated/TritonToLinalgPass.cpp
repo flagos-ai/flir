@@ -52,6 +52,7 @@
 #if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -79,6 +80,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 
 #ifdef __TLE_STRUCT__
 #include "tle/dsa/dialect/include/Conversion/TleToLinalg/DSACopyConverter.h"
@@ -820,6 +822,75 @@ TritonToLinalgIncubatedPass::processLegalStrideOperations(ModuleOp moduleOp) {
   return success();
 }
 
+namespace {
+struct LowerNarrowFp32Transpose : OpRewritePattern<triton::TransOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(triton::TransOp op,
+                                PatternRewriter &rewriter) const override {
+    auto srcType = cast<RankedTensorType>(op.getSrc().getType());
+    auto dstType = cast<RankedTensorType>(op.getType());
+    if (!srcType.hasStaticShape() || srcType.getEncoding() ||
+        dstType.getEncoding() || !srcType.getElementType().isF32())
+      return failure();
+
+    // CANN 9 on 910B can corrupt values when lowering a transpose with
+    // 16-byte FP32 rows. Use the standard gather lowering to preserve
+    // row-major element order across the short axis.
+    ArrayRef<int64_t> shape = srcType.getShape();
+    ArrayRef<int32_t> order = op.getOrder();
+    bool matrix =
+        order == ArrayRef<int32_t>{1, 0} && (shape[0] == 4 || shape[1] == 4);
+    bool tiled = order == ArrayRef<int32_t>{1, 0, 2} && shape[2] == 4;
+    if ((!matrix && !tiled) || !llvm::all_of(shape, [](int64_t dim) {
+          return dim > 0 && dim <= 4096 && llvm::isPowerOf2_64(dim);
+        }))
+      return failure();
+
+    int64_t size = srcType.getNumElements();
+    // Keep the 32-bit gather index vector within 16 KiB of UB.
+    if (size < 32 || size > 4096)
+      return failure();
+
+    auto loc = op.getLoc();
+    auto indexType = RankedTensorType::get({size}, rewriter.getI32Type());
+    auto splat = [&](int32_t value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, DenseIntElementsAttr::get(indexType, ArrayRef<int32_t>{value}));
+    };
+    Value linear =
+        rewriter.create<triton::MakeRangeOp>(loc, indexType, 0, size);
+    Value matrixIndex = linear;
+    if (tiled)
+      matrixIndex = rewriter.create<arith::ShRUIOp>(loc, linear, splat(2));
+
+    // Output coordinates are (column, row, lane). Map them to the input
+    // offset ((row * columns + column) * lanes + lane).
+    Value row =
+        rewriter.create<arith::AndIOp>(loc, matrixIndex, splat(shape[0] - 1));
+    Value column = rewriter.create<arith::ShRUIOp>(
+        loc, matrixIndex, splat(llvm::Log2_64(shape[0])));
+    Value rowOffset = rewriter.create<arith::ShLIOp>(
+        loc, row, splat(llvm::Log2_64(shape[1])));
+    Value index = rewriter.create<arith::OrIOp>(loc, rowOffset, column);
+    if (tiled) {
+      Value lane = rewriter.create<arith::AndIOp>(loc, linear, splat(3));
+      index = rewriter.create<arith::ShLIOp>(loc, index, splat(2));
+      index = rewriter.create<arith::OrIOp>(loc, index, lane);
+    }
+
+    Value flat = rewriter.create<triton::ReshapeOp>(
+        loc, ArrayRef<int64_t>{size}, op.getSrc());
+    Value gathered = rewriter.create<triton::GatherOp>(
+        loc, flat.getType(), flat, index, rewriter.getI32IntegerAttr(0),
+        UnitAttr());
+    rewriter.replaceOpWithNewOp<triton::ReshapeOp>(op, dstType.getShape(),
+                                                   gathered);
+    return success();
+  }
+};
+} // namespace
+
 void TritonToLinalgIncubatedPass::runOnOperation() {
   compileOn91095Flag = this->compileOn91095;
 
@@ -880,6 +951,10 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   RewritePatternSet canonicalizerPatterns(&getContext());
   // 1. Canonicalize load/store related patterns.
   this->populateTritonToLinalgCanonicalizationPatterns(canonicalizerPatterns);
+  auto device = moduleOp->getAttrOfType<hacc::TargetAttr>("hacc.target");
+  if (!compileOn91095Flag && !existDot && !existSIMTOp && device &&
+      device.getTarget().getValue().starts_with("Ascend910B"))
+    canonicalizerPatterns.add<LowerNarrowFp32Transpose>(&getContext());
   if (failed(
           applyPatternsGreedily(moduleOp, std::move(canonicalizerPatterns)))) {
     moduleOp->emitError("failed to apply Canonicalizer Patterns");
