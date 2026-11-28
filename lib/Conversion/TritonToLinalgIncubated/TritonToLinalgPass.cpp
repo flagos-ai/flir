@@ -52,6 +52,7 @@
 #if __has_include("bishengir/Dialect/Annotation/IR/Annotation.h")
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #endif
+#include "../NarrowTranspose.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
@@ -828,6 +829,12 @@ struct LowerNarrowFp32Transpose : OpRewritePattern<triton::TransOp> {
 
   LogicalResult matchAndRewrite(triton::TransOp op,
                                 PatternRewriter &rewriter) const override {
+    // Keep implicit memory transposes on the native lowering path. Folding
+    // an inner transpose into a recorded outer one can change its order.
+    if (op->getAttrOfType<DenseI32ArrayAttr>(kOriginalTransposeOrder) !=
+        op.getOrderAttr())
+      return failure();
+
     auto srcType = cast<RankedTensorType>(op.getSrc().getType());
     auto dstType = cast<RankedTensorType>(op.getType());
     if (!srcType.hasStaticShape() || srcType.getEncoding() ||
@@ -953,13 +960,17 @@ void TritonToLinalgIncubatedPass::runOnOperation() {
   this->populateTritonToLinalgCanonicalizationPatterns(canonicalizerPatterns);
   auto device = moduleOp->getAttrOfType<hacc::TargetAttr>("hacc.target");
   if (!compileOn91095Flag && !existDot && !existSIMTOp && device &&
-      device.getTarget().getValue().starts_with("Ascend910B"))
+      device.getTarget().getValue().starts_with("Ascend910B") &&
+      moduleOp->hasAttr(kOriginalTransposeOrdersRecorded))
     canonicalizerPatterns.add<LowerNarrowFp32Transpose>(&getContext());
   if (failed(
           applyPatternsGreedily(moduleOp, std::move(canonicalizerPatterns)))) {
     moduleOp->emitError("failed to apply Canonicalizer Patterns");
     signalPassFailure();
   }
+  if (moduleOp->removeAttr(kOriginalTransposeOrdersRecorded))
+    moduleOp.walk(
+        [](triton::TransOp op) { op->removeAttr(kOriginalTransposeOrder); });
 
   // 2.1 Pre-clean dead control-flow before use analysis.
   // This helps remove unreachable branches such as `scf.if %true` else-region,

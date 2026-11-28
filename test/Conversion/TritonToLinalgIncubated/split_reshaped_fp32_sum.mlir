@@ -1,4 +1,4 @@
-// RUN: triton-shared-opt --triton-to-linalg-incubated=named-ops=true %s | FileCheck %s
+// RUN: %flir-ascend-opt --triton-to-linalg-incubated=named-ops=true %s | FileCheck %s
 // REQUIRES: flir-incubated
 
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
