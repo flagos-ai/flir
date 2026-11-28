@@ -70,6 +70,14 @@ tools = [
 ]
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)
+if 'flir-incubated' in config.available_features:
+    ascend_tools = [
+        os.path.join(config.triton_obj_root, 'third_party', 'ascend', 'bin'),
+        os.path.join(config.triton_obj_root, 'bin'),
+    ] + tool_dirs
+    llvm_config.add_tool_substitutions(
+        [ToolSubst('%flir-ascend-opt', command=FindTool('triton-opt'), unresolved='fatal')],
+        ascend_tools)
 
 # TODO: what's this?
 llvm_config.with_environment('PYTHONPATH', [

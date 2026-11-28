@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <optional>
 
+#include "../NarrowTranspose.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #endif
@@ -127,6 +129,20 @@ LogicalResult TritonToStructuredIncubatedPass::processSplatBinaryOperations(
 
 void TritonToStructuredIncubatedPass::runOnOperation() {
   auto moduleOp = getOperation();
+  auto device = moduleOp->getAttrOfType<hacc::TargetAttr>("hacc.target");
+  if (device && device.getTarget().getValue().starts_with("Ascend910B") &&
+      !moduleOp->hasAttr(Incubated::kOriginalTransposeOrdersRecorded)) {
+    // This pass can run twice. Record only the transposes that are present
+    // before memory lowering, which can introduce more tt.trans operations.
+    moduleOp->setAttr(Incubated::kOriginalTransposeOrdersRecorded,
+                      UnitAttr::get(&getContext()));
+    moduleOp.walk([](triton::TransOp op) {
+      auto srcType = cast<RankedTensorType>(op.getSrc().getType());
+      if (srcType.getElementType().isF32() && !srcType.getEncoding())
+        op->setAttr(Incubated::kOriginalTransposeOrder, op.getOrderAttr());
+    });
+  }
+
   ConversionTarget target(getContext());
   RewritePatternSet canonicalizerPatterns(&getContext());
 
